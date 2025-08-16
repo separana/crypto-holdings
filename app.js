@@ -1,4 +1,4 @@
-/* Holdings v4 - dynamic colors, FX conversion, sparklines, badges, force refresh */
+/* Holdings v4 - FULL app.js with hardcoded pie colors for BTC/ENJ/ADA/SOL/ETH */
 const $ = (s)=>document.querySelector(s);
 const assetsDiv = $("#assets");
 const totalsDiv = $("#totals");
@@ -45,11 +45,23 @@ function fmt(n){ return new Intl.NumberFormat('nl-BE', {maximumFractionDigits: n
 function money(n){ const cur = state.fiat==='eur'?'EUR':'USD'; return new Intl.NumberFormat('nl-BE', {style:'currency',currency:cur}).format(n||0); }
 function signClass(x){ return (x||0) >= 0 ? 'gain' : 'loss'; }
 function seedPastel(seed){
-  // generate deterministic pastel from seed string
   let h = 0;
   for(let i=0;i<seed.length;i++) h = (h*31 + seed.charCodeAt(i)) >>> 0;
   const hue = h % 360;
   return `hsl(${hue},70%,60%)`;
+}
+
+// ✅ Hardcoded colors for your requested coins (pie chart)
+function pieColorForSymbol(sym, fallbackSeed){
+  const s = (sym || '').toUpperCase();
+  const map = {
+    'BTC': '#f7931a',   // Oranje
+    'ENJ': '#6e29d9',   // Paars
+    'ADA': '#0033ad',   // Blauw
+    'SOL': '#00ffa3',   // Turquoise
+    'ETH': '#3cba54'    // Groen
+  };
+  return map[s] || seedPastel(fallbackSeed || s || 'coin');
 }
 
 // -------- CoinGecko helpers
@@ -61,7 +73,6 @@ async function geckoSearch(q){
 }
 
 async function geckoDetails(id){
-  // includes sparkline; color not officially provided => we create pastel color from id/name
   const r = await fetch(`https://api.coingecko.com/api/v3/coins/${id}?localization=false&tickers=false&community_data=false&developer_data=false&sparkline=true`);
   if(!r.ok) return null;
   const j = await r.json();
@@ -82,7 +93,6 @@ async function geckoPrices(ids, vs){
 }
 
 async function fxRateEURUSD(){
-  // derive FX via BTC price in USD/EUR
   const r = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd,eur');
   if(!r.ok) return null;
   const j = await r.json();
@@ -102,7 +112,6 @@ function renderTotals(){
     <div class="box"><div class="muted">Geïnvesteerd</div><div class="big">${money(invested)}</div></div>
     <div class="box"><div class="muted">P/L</div><div class="big ${signClass(pl)}">${money(pl)} <span class="badg">${fmt(plPct)}%</span></div></div>
   `;
-  // best/worst by personal P/L
   let best = null, worst = null;
   state.items.forEach(it=>{
     const plIt = (it.price||0)*(it.amount||0) - (it.avgCost||0)*(it.amount||0);
@@ -118,7 +127,7 @@ function sparkline(canvas, data, color){
   const w = canvas.width = canvas.offsetWidth;
   const h = canvas.height = 40;
   ctx.clearRect(0,0,w,h);
-  if(!data || data.length<2){ ctx.strokeStyle = '#3b3b3b'; ctx.strokeRect(0,0,w,h); return; }
+  if(!data || data.length<2){ return; }
   const min = Math.min(...data), max = Math.max(...data);
   const pad = 4;
   ctx.beginPath();
@@ -181,9 +190,6 @@ function renderAssets(){
       const first = (it.spark7d?.length? it.spark7d[0] : 0);
       const col = lastUp>=first ? '#16a34a' : '#ef4444';
       sparkline(can, it.spark7d||[], col);
-    } else {
-      const b = document.getElementById(`badges-${idx}`);
-      if(b) b.style.marginRight = 'auto';
     }
   });
 }
@@ -191,7 +197,8 @@ function renderAssets(){
 function renderPie(){
   const labels = state.items.map(it=>it.symbol);
   const data = state.items.map(it=> (it.price||0)*(it.amount||0) );
-  const colors = state.items.map(it=> it.color || seedPastel(it.id) );
+  // Use your fixed map for key coins
+  const colors = state.items.map(it=> pieColorForSymbol(it.symbol, it.id) );
   if(pieChart) pieChart.destroy();
   pieChart = new Chart(pieCtx, {
     type: 'pie',
@@ -260,7 +267,6 @@ $("#saveSettings").addEventListener('click', async ()=>{
   save();
 
   if(prev !== state.fiat){
-    // Convert avgCost and show FX note
     const fx = await fxRateEURUSD();
     if(fx){
       if(prev==='eur' && state.fiat==='usd'){
@@ -315,7 +321,9 @@ $("#forceBtn").addEventListener('click', async ()=>{
 window.addEventListener('beforeinstallprompt', (e)=>{
   e.preventDefault(); deferredPrompt = e;
   const btn = $("#installBtn");
-  btn.onclick = async ()=>{ deferredPrompt?.prompt(); await deferredPrompt?.userChoice; deferredPrompt=null; };
+  if(btn){
+    btn.onclick = async ()=>{ deferredPrompt?.prompt(); await deferredPrompt?.userChoice; deferredPrompt=null; };
+  }
 });
 
 // Sample
@@ -340,20 +348,22 @@ async function refreshPrices(){
   pieWrap.classList.add('shimmer');
   const ids = state.items.map(it=>it.id).join(',');
   const prices = await geckoPrices(ids, state.fiat);
-  // update details for change and spark every few refreshes or if missing
   for(let i=0;i<state.items.length;i++){
     const it = state.items[i];
     const p = prices[it.id]?.[state.fiat] ?? it.price ?? 0;
     it.price = p;
     it.value = p * (it.amount||0);
     if(prices[it.id]?.[`${state.fiat}_24h_change`] !== undefined) it.change24h = prices[it.id][`${state.fiat}_24h_change`];
+  }
+  // occasional detail refresh to keep 7d change & spark fresh
+  for(let i=0;i<state.items.length;i++){
+    const it = state.items[i];
     if(!it.spark7d || it.spark7d.length===0 || Math.random()<0.1){
       const det = await geckoDetails(it.id);
       if(det){
         it.icon = det.icon || it.icon;
         it.spark7d = det.spark || it.spark7d;
         it.change7d = det.change7d ?? it.change7d;
-        it.color = det.color || it.color || seedPastel(it.id);
       }
     }
   }
