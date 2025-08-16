@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#6d5efc" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="icon-192.png" />
+  <title>Holdings v4</title>
+  <style>
+    :root {
+      --bg:#0b1020; --text:#e9ecf7; --muted:#a6b0c6; --card:#111833; --border:#1c2450;
+      --acc:#6d5efc; --good:#16a34a; --bad:#ef4444;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;color:var(--text);font:16px/1.4 system-ui,-apple-system,Segoe UI,Roboto;background:
+      radial-gradient(1200px 600px at 20% -10%, #1d1b6a 0%, #0b1020 60%) no-repeat, #0b1020;}
+    a{color:inherit}
+    header{position:sticky;top:0;background:#0b1020cc;border-bottom:1px solid var(--border);backdrop-filter:blur(8px)}
+    .wrap{max-width:1100px;margin:0 auto;padding:14px 16px}
+    h1{margin:0;font-size:20px;letter-spacing:.3px}
+    .grid{display:grid;grid-template-columns:1fr;gap:16px;margin-top:16px}
+    @media(min-width:980px){.grid{grid-template-columns:2fr 1fr}}
+    .card{background:linear-gradient(180deg,#11183a,#0e1733);border:1px solid var(--border);border-radius:14px;padding:16px;box-shadow:0 12px 24px rgba(0,0,0,.25)}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    @media(max-width:640px){.row{grid-template-columns:1fr}}
+    input,select,button{width:100%;padding:10px 12px;border-radius:10px;border:1px solid #29316b;background:#0b1435;color:var(--text)}
+    button.primary{background:linear-gradient(180deg,#7b6cfe,#5d4ff2);border:0;color:white;font-weight:600}
+    button.bad{background:var(--bad);border:0;color:white}
+    button.ghost{background:transparent;border:1px dashed #2b356b;color:var(--muted)}
+    .totals{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+    .totals .box{background:#0e1537;border:1px solid var(--border);border-radius:12px;padding:12px}
+    .big{font-size:22px;font-weight:800}
+    .gain{color:var(--good);font-weight:700}
+    .loss{color:var(--bad);font-weight:700}
+    .flex{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .assets{display:grid;grid-template-columns:1fr;gap:10px}
+    @media(min-width:700px){.assets{grid-template-columns:1fr 1fr}}
+    .asset{display:grid;grid-template-columns:56px 1fr;gap:12px;align-items:center;background:#0e1537;border:1px solid var(--border);border-radius:12px;padding:10px}
+    .icon{width:56px;height:56px;border-radius:12px;background:#0b1435;border:1px solid #29316b;display:flex;align-items:center;justify-content:center;overflow:hidden}
+    .name{font-weight:700}
+    .muted{color:var(--muted)}
+    .badg{font-size:12px;padding:2px 8px;border-radius:999px;border:1px solid #2b356b;background:#0b1435}
+    canvas.spark{width:100%;height:40px}
+    .shimmer{position:relative;overflow:hidden;background:#10173a}
+    .shimmer::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.06),transparent);transform:translateX(-100%);animation:shimmer 1.4s infinite}
+    @keyframes shimmer{100%{transform:translateX(100%)}}
+    .pieWrap{min-height:240px;position:relative}
+    .pieWrap.loading::before{content:"";position:absolute;inset:0;border-radius:12px}
+    .right{display:flex;gap:8px;align-items:center;justify-content:flex-end}
+    footer{opacity:.7;font-size:12px;margin:24px 0}
+  </style>
+</head>
+<body>
+<header>
+  <div class="wrap" style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+    <h1>💰 Holdings v4</h1>
+    <div class="right">
+      <button id="forceBtn" class="ghost">Force Refresh</button>
+      <button id="exportBtn">Export</button>
+      <label for="importFile" class="badg" style="cursor:pointer">Importeer</label>
+      <input id="importFile" type="file" accept="application/json" style="display:none" />
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="grid">
+    <section class="card">
+      <div class="totals" id="totals"></div>
+      <div class="flex" style="margin:8px 0">
+        <span id="best" class="badg">🏆 Best: —</span>
+        <span id="worst" class="badg">📉 Worst: —</span>
+        <span id="fxNote" class="muted"></span>
+      </div>
+      <div class="pieWrap card" style="padding:12px" id="pieWrap">
+        <canvas id="pie" height="200"></canvas>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <div>
+          <label>Munt zoeken</label>
+          <input id="search" placeholder="bv. bitcoin, solana, ..." />
+        </div>
+        <div>
+          <label>Resultaat</label>
+          <select id="searchResult"></select>
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <div>
+          <label>Hoeveelheid</label>
+          <input id="amount" type="number" step="any" placeholder="0.0" />
+        </div>
+        <div>
+          <label>Gemiddelde aankoopprijs</label>
+          <input id="avgCost" type="number" step="any" placeholder="in gekozen valuta" />
+        </div>
+      </div>
+      <div class="row">
+        <button id="addBtn" class="primary">Toevoegen / Bijwerken</button>
+        <button id="clearBtn" class="bad">Alles wissen</button>
+      </div>
+
+      <div class="assets" id="assets"></div>
+    </section>
+
+    <aside class="card">
+      <h3 style="margin-top:0">Instellingen</h3>
+      <div class="row">
+        <div>
+          <label>Valuta</label>
+          <select id="fiat">
+            <option value="eur" selected>EUR (€)</option>
+            <option value="usd">USD ($)</option>
+          </select>
+        </div>
+        <div>
+          <label>Refresh (minuten)</label>
+          <input id="refresh" type="number" min="1" value="5"/>
+        </div>
+      </div>
+      <div class="row">
+        <div class="flex">
+          <input id="toggleSpark" type="checkbox" checked /> <label for="toggleSpark">Mini-grafieken tonen</label>
+        </div>
+        <div class="flex">
+          <input id="toggleBadges" type="checkbox" checked /> <label for="toggleBadges">24h/7d badges tonen</label>
+        </div>
+      </div>
+      <div class="row">
+        <button id="saveSettings" class="primary">Opslaan</button>
+        <button id="refreshNow">Nu verversen</button>
+      </div>
+
+      <div class="row" style="margin-top:10px">
+        <button id="installBtn" class="ghost">Installeer app</button>
+      </div>
+
+      <div class="row" style="margin-top:10px">
+        <button id="loadSample" class="ghost">Laad voorbeeld (BTC/ETH/ADA/SOL/ENJ)</button>
+      </div>
+
+      <p class="muted" style="margin-top:10px">Alles blijft lokaal (localStorage). PWA werkt offline na eerste keer laden.</p>
+    </aside>
+  </div>
+
+  <footer class="muted">Prijzen & data via CoinGecko. UI v4.</footer>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="app.js"></script>
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js'));
+}
+</script>
+</body>
+</html>
