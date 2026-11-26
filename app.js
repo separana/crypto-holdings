@@ -1,7 +1,8 @@
-/* Holdings v5 - Autocomplete, Privacy Mode, Center-Text Donut, Sorting & DCA History */
+/* Family Net Worth v6 - Multi-Owner (Mine / Léo / César), ETFs + Crypto + Manual Assets */
 const $ = (s) => document.querySelector(s);
 
 const assetsDiv = $("#assets");
+const heroTitle = $("#heroTitle");
 const heroTotal = $("#heroTotal");
 const heroInvested = $("#heroInvested");
 const heroPlBadge = $("#heroPlBadge");
@@ -16,17 +17,43 @@ const refreshInp = $("#refresh");
 const toggleSpark = $("#toggleSpark");
 const toggleBadges = $("#toggleBadges");
 const sortSel = $("#sortSel");
-const curLabel = $("#curLabel");
+const typeFilter = $("#typeFilter");
 
+const assetTypeSel = $("#assetType");
+const assetOwnerSel = $("#assetOwner");
 const searchInp = $("#search");
 const dropdown = $("#dropdown");
+const etfTickerInp = $("#etfTicker");
+const etfNameInp = $("#etfName");
+const manualNameInp = $("#manualName");
+const manualValueInp = $("#manualValue");
 const amountInp = $("#amount");
 const avgCostInp = $("#avgCost");
 
 let pieChart;
 let deferredPrompt;
 let searchTimer;
-let selectedCoin = null; // { id, symbol, name, thumb }
+let selectedCrypto = null;
+let editingId = null;
+
+const OWNER_LABELS = {
+  all: 'Totale Gezinswaarde',
+  mine: 'Mijn Vermogen',
+  leo: 'Portefeuille Léo',
+  cesar: 'Portefeuille César'
+};
+
+const OWNER_BADGES = {
+  mine: '👤 Niké',
+  leo: '👧 Léo',
+  cesar: '👶 César'
+};
+
+const TYPE_LABELS = {
+  etf: 'ETF / Aandeel',
+  crypto: 'Crypto',
+  manual: 'Cash / Overig'
+};
 
 let state = {
   fiat: 'eur',
@@ -34,27 +61,57 @@ let state = {
   showSpark: true,
   showBadges: true,
   privacy: false,
+  activeOwner: 'all',
+  chartMode: 'category', // 'category' | 'asset'
   sortBy: 'value',
+  typeFilter: 'all',
   lastUpdated: null,
   items: []
 };
 
 function save() {
-  localStorage.setItem('holdings.v4', JSON.stringify(state));
+  localStorage.setItem('holdings.v6', JSON.stringify(state));
 }
 
 function load() {
-  const raw = localStorage.getItem('holdings.v4');
-  if (raw) {
+  let raw = localStorage.getItem('holdings.v6');
+  // Automatische migratie vanaf je vorige v4/v5 crypto-opslag
+  if (!raw) {
+    const oldRaw = localStorage.getItem('holdings.v4');
+    if (oldRaw) {
+      try {
+        const oldData = JSON.parse(oldRaw);
+        if (Array.isArray(oldData.items)) {
+          state.fiat = oldData.fiat || 'eur';
+          state.items = oldData.items.map(it => ({
+            ...it,
+            uid: `crypto_${it.id}_mine`,
+            type: 'crypto',
+            owner: 'mine'
+          }));
+          save();
+        }
+      } catch {}
+    }
+  } else {
     try { state = Object.assign(state, JSON.parse(raw)); } catch {}
   }
+
   fiatSel.value = state.fiat || 'eur';
-  curLabel.textContent = (state.fiat || 'eur').toUpperCase();
+  document.querySelectorAll('.curLabel').forEach(el => el.textContent = (state.fiat || 'eur').toUpperCase());
   refreshInp.value = state.refreshMins || 5;
   toggleSpark.checked = state.showSpark !== false;
   toggleBadges.checked = state.showBadges !== false;
   sortSel.value = state.sortBy || 'value';
+  typeFilter.value = state.typeFilter || 'all';
   document.body.classList.toggle('blur-mode', !!state.privacy);
+
+  document.querySelectorAll('#ownerTabs .tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.owner === state.activeOwner);
+  });
+  document.querySelectorAll('#chartModeToggle button').forEach(b => {
+    b.classList.toggle('active', b.dataset.mode === state.chartMode);
+  });
 }
 load();
 
@@ -64,7 +121,7 @@ function toast(msg) {
   t.textContent = msg;
   t.classList.add('show');
   clearTimeout(t._timer);
-  t._timer = setTimeout(() => t.classList.remove('show'), 2600);
+  t._timer = setTimeout(() => t.classList.remove('show'), 2800);
 }
 
 function fmt(n) {
@@ -83,21 +140,40 @@ function seedColor(seed) {
   return `hsl(${h % 360}, 68%, 55%)`;
 }
 
-function pieColorForSymbol(sym, fallbackSeed) {
-  const s = (sym || '').toUpperCase();
+function colorForItem(it) {
+  const s = (it.symbol || '').toUpperCase();
   const map = {
     'BTC': '#f7931a',
     'ETH': '#627eea',
     'SOL': '#14f195',
     'ADA': '#3b82f6',
     'ENJ': '#8b5cf6',
-    'XRP': '#00aae4',
-    'DOT': '#e6007a'
+    'VWCE': '#10b981',
+    'VWCE.DE': '#10b981',
+    'SPYI.DE': '#06b6d4',
+    'EXUS.DE': '#6366f1'
   };
-  return map[s] || seedColor(fallbackSeed || s || 'coin');
+  return map[s] || seedColor(it.uid || s || 'asset');
 }
 
-// -------- CoinGecko API
+// -------- Formulier wisselen op basis van Type Actief
+function syncFormFields() {
+  const t = assetTypeSel.value;
+  $("#etfWrap").style.display = t === 'etf' ? 'grid' : 'none';
+  $("#cryptoSearchWrap").style.display = t === 'crypto' ? 'block' : 'none';
+  $("#manualWrap").style.display = t === 'manual' ? 'grid' : 'none';
+  $("#qtyField").style.display = t === 'manual' ? 'none' : 'block';
+  $("#costLabel").innerHTML = t === 'manual'
+    ? `Totale inleg / kostprijs (<span class="curLabel">${state.fiat.toUpperCase()}</span>)`
+    : `Aankoopprijs per stuk (<span class="curLabel">${state.fiat.toUpperCase()}</span>)`;
+}
+assetTypeSel.addEventListener('change', () => {
+  editingId = null;
+  syncFormFields();
+});
+syncFormFields();
+
+// -------- APIs: CoinGecko (Crypto) & Yahoo Finance (ETF / Aandelen)
 async function geckoSearch(q) {
   try {
     const r = await fetch(`https://api.coingecko.com/api/v3/search?query=${encodeURIComponent(q)}`);
@@ -109,17 +185,45 @@ async function geckoSearch(q) {
       name: c.name,
       thumb: c.thumb
     })) || [];
-  } catch {
-    return [];
-  }
+  } catch { return []; }
 }
 
 async function geckoMarketsBatch(ids, vs) {
   if (!ids.length) return [];
   const url = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=${encodeURIComponent(vs)}&ids=${encodeURIComponent(ids.join(','))}&sparkline=true&price_change_percentage=24h,7d`;
   const r = await fetch(url);
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  if (!r.ok) throw new Error(`CoinGecko HTTP ${r.status}`);
   return r.json();
+}
+
+async function fetchYahooQuote(ticker, targetFiat) {
+  // Gebruikt allorigins CORS-proxy om Yahoo Finance chart-data op te halen
+  const targetUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=7d`;
+  const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
+  const r = await fetch(proxyUrl);
+  if (!r.ok) throw new Error('Yahoo fetch error');
+  const j = await r.json();
+  const res = j.chart?.result?.[0];
+  if (!res) return null;
+
+  const meta = res.meta;
+  const closes = (res.indicators?.quote?.[0]?.close || []).filter(v => v != null);
+  let price = meta.regularMarketPrice || closes[closes.length - 1] || 0;
+  const prevClose = meta.chartPreviousClose || closes[0] || price;
+  const change24h = prevClose > 0 ? ((price - prevClose) / prevClose) * 100 : 0;
+  const first7d = closes[0] || price;
+  const change7d = first7d > 0 ? ((price - first7d) / first7d) * 100 : 0;
+
+  // Valuta-conversie indien de ETF in USD noteert terwijl app op EUR staat (of vice versa)
+  const quoteCur = (meta.currency || 'EUR').toLowerCase();
+  if (quoteCur !== targetFiat && (quoteCur === 'eur' || quoteCur === 'usd')) {
+    const fx = await fxRateEURUSD();
+    if (fx) {
+      price = (quoteCur === 'usd' && targetFiat === 'eur') ? (price / fx) : (price * fx);
+    }
+  }
+
+  return { price, change24h, change7d, spark7d: closes };
 }
 
 async function fxRateEURUSD() {
@@ -129,14 +233,17 @@ async function fxRateEURUSD() {
     const j = await r.json();
     const usd = j.bitcoin?.usd || 0, eur = j.bitcoin?.eur || 0;
     return (usd && eur) ? (usd / eur) : null;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
-// -------- Sorting & Metrics
-function getSortedItems() {
-  const list = [...state.items];
+// -------- Filtering & Sorting
+function getVisibleItems() {
+  let list = state.items.filter(it => {
+    if (state.activeOwner !== 'all' && it.owner !== state.activeOwner) return false;
+    if (state.typeFilter !== 'all' && it.type !== state.typeFilter) return false;
+    return true;
+  });
+
   if (state.sortBy === 'plPct') {
     return list.sort((a, b) => {
       const pctA = a.avgCost > 0 ? ((a.price - a.avgCost) / a.avgCost) : -999;
@@ -152,21 +259,25 @@ function getSortedItems() {
 
 // -------- Rendering
 function renderTotals() {
+  // Bereken totalen voor de gekozen eigenaar-tab (ongeacht typeFilter)
+  const ownerItems = state.items.filter(it => state.activeOwner === 'all' || it.owner === state.activeOwner);
+
   let total = 0, invested = 0;
-  state.items.forEach(it => {
+  ownerItems.forEach(it => {
     total += (it.price || 0) * (it.amount || 0);
     invested += (it.avgCost || 0) * (it.amount || 0);
   });
   const pl = total - invested;
   const plPct = invested > 0 ? (pl / invested * 100) : 0;
 
+  heroTitle.textContent = OWNER_LABELS[state.activeOwner] || 'Totale Waarde';
   heroTotal.textContent = money(total);
   heroInvested.textContent = money(invested);
   heroPlBadge.className = `pill sensitive ${pl >= 0 ? 'gain' : 'loss'}`;
   heroPlBadge.textContent = `${pl >= 0 ? '+' : ''}${money(pl)} (${pl >= 0 ? '+' : ''}${fmt(plPct)}%)`;
 
   let best = null, worst = null;
-  state.items.forEach(it => {
+  ownerItems.forEach(it => {
     const inv = (it.avgCost || 0) * (it.amount || 0);
     const plIt = ((it.price || 0) * (it.amount || 0)) - inv;
     const pct = inv > 0 ? (plIt / inv) * 100 : (it.change24h || 0);
@@ -192,8 +303,6 @@ function sparkline(canvas, data, isPositive) {
 
   const min = Math.min(...data), max = Math.max(...data);
   const pad = 6;
-  const color = isPositive ? '#10b981' : '#f43f5e';
-
   ctx.beginPath();
   data.forEach((v, i) => {
     const x = pad + (w - 2 * pad) * (i / (data.length - 1));
@@ -203,20 +312,21 @@ function sparkline(canvas, data, isPositive) {
   ctx.lineWidth = 3;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-  ctx.strokeStyle = color;
+  ctx.strokeStyle = isPositive ? '#10b981' : '#f43f5e';
   ctx.stroke();
 }
 
 function renderAssets(portfolioTotal) {
   assetsDiv.innerHTML = '';
-  const sorted = getSortedItems();
+  const visible = getVisibleItems();
+  $("#listTitle").textContent = `${OWNER_LABELS[state.activeOwner]} (${visible.length})`;
 
-  if (!sorted.length) {
-    assetsDiv.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:24px;color:var(--muted)">Nog geen munten toegevoegd. Zoek hierboven een munt om te starten.</div>`;
+  if (!visible.length) {
+    assetsDiv.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:24px;color:var(--muted)">Geen posities in deze weergave. Voeg hierboven een ETF, crypto of spaarrekening toe.</div>`;
     return;
   }
 
-  sorted.forEach((it, idx) => {
+  visible.forEach((it, idx) => {
     const val = (it.price || 0) * (it.amount || 0);
     const inv = (it.avgCost || 0) * (it.amount || 0);
     const pl = val - inv;
@@ -225,27 +335,39 @@ function renderAssets(portfolioTotal) {
     const ch24 = it.change24h || 0;
     const ch7 = it.change7d || 0;
 
+    const fallbackEmoji = it.type === 'etf' ? '📈' : (it.type === 'manual' ? '🏦' : (it.symbol?.[0] || '?'));
+
     const card = document.createElement('div');
     card.className = 'asset';
     card.innerHTML = `
       <div class="asset-top">
         <div class="asset-id">
           <div class="coin-icon">
-            ${it.icon ? `<img src="${it.icon}" alt="${it.symbol}">` : (it.symbol?.[0] || '?')}
+            ${it.icon ? `<img src="${it.icon}" alt="${it.symbol}">` : fallbackEmoji}
           </div>
           <div>
-            <div class="coin-name">${it.name} <span class="weight-tag">${fmt(weight)}%</span></div>
-            <div style="font-size:12px;color:var(--muted)">Koers: ${money(it.price)}</div>
+            <div class="coin-name">
+              ${it.name}
+              <span class="tag">${fmt(weight)}%</span>
+              ${state.activeOwner === 'all' ? `<span class="tag owner">${OWNER_BADGES[it.owner] || ''}</span>` : ''}
+            </div>
+            <div style="font-size:12px;color:var(--muted)">
+              ${it.type === 'manual' ? 'Manuele waardering' : `Koers: ${money(it.price)}`}
+            </div>
           </div>
         </div>
         <div style="text-align:right">
           <div style="font-weight:700;font-size:15px" class="sensitive">${money(val)}</div>
-          <div style="font-size:12px;color:var(--muted)" class="sensitive">${fmtQty(it.amount)} ${it.symbol}</div>
+          <div style="font-size:12px;color:var(--muted)" class="sensitive">
+            ${it.type === 'manual' ? '' : `${fmtQty(it.amount)} ${it.symbol}`}
+          </div>
         </div>
       </div>
 
       <div class="asset-mid">
-        <div style="font-size:12px;color:var(--muted)">GAK: <span class="sensitive">${money(it.avgCost)}</span></div>
+        <div style="font-size:12px;color:var(--muted)">
+          ${it.type === 'manual' ? `Inleg: <span class="sensitive">${money(inv)}</span>` : `GAK: <span class="sensitive">${money(it.avgCost)}</span>`}
+        </div>
         <div class="sensitive" style="font-size:13px;font-weight:700;color:${pl >= 0 ? 'var(--good)' : 'var(--bad)'}">
           ${pl >= 0 ? '+' : ''}${money(pl)} (${pl >= 0 ? '+' : ''}${fmt(plPct)}%)
         </div>
@@ -253,40 +375,58 @@ function renderAssets(portfolioTotal) {
 
       <div class="asset-bot">
         <div style="display:flex;gap:5px;flex-wrap:wrap">
-          ${state.showBadges ? `
+          ${(state.showBadges && it.type !== 'manual') ? `
             <span class="pill ${ch24 >= 0 ? 'gain' : 'loss'}">24u ${ch24 >= 0 ? '+' : ''}${fmt(ch24)}%</span>
             <span class="pill ${ch7 >= 0 ? 'gain' : 'loss'}">7d ${ch7 >= 0 ? '+' : ''}${fmt(ch7)}%</span>
-          ` : ''}
+          ` : `<span class="tag">${TYPE_LABELS[it.type]}</span>`}
         </div>
-        ${state.showSpark ? `<canvas class="spark" id="spark-${idx}"></canvas>` : ''}
+        ${(state.showSpark && it.type !== 'manual' && it.spark7d?.length > 1) ? `<canvas class="spark" id="spark-${idx}"></canvas>` : ''}
       </div>
 
       <div style="display:flex;justify-content:flex-end;gap:6px;margin-top:10px">
-        <button data-action="edit" data-id="${it.id}" class="ghost icon-btn" style="padding:5px 10px;font-size:12px">Bewerk</button>
-        <button data-action="remove" data-id="${it.id}" class="danger icon-btn" style="padding:5px 10px;font-size:12px">Verwijder</button>
+        <button data-action="edit" data-uid="${it.uid}" class="ghost icon-btn" style="padding:5px 10px;font-size:12px">Bewerk</button>
+        <button data-action="remove" data-uid="${it.uid}" class="danger icon-btn" style="padding:5px 10px;font-size:12px">Verwijder</button>
       </div>
     `;
     assetsDiv.appendChild(card);
 
-    if (state.showSpark) {
+    if (state.showSpark && it.type !== 'manual' && it.spark7d?.length > 1) {
       const can = document.getElementById(`spark-${idx}`);
-      const lastUp = it.spark7d?.length ? it.spark7d[it.spark7d.length - 1] : 0;
-      const first = it.spark7d?.length ? it.spark7d[0] : 0;
-      sparkline(can, it.spark7d || [], lastUp >= first);
+      const lastUp = it.spark7d[it.spark7d.length - 1];
+      const first = it.spark7d[0];
+      sparkline(can, it.spark7d, lastUp >= first);
     }
   });
 }
 
 function renderPie(portfolioTotal) {
-  const sorted = [...state.items].sort((a, b) => ((b.price || 0) * b.amount) - ((a.price || 0) * a.amount));
-  const labels = sorted.map(it => it.symbol);
-  const data = sorted.map(it => (it.price || 0) * (it.amount || 0));
-  const colors = sorted.map(it => pieColorForSymbol(it.symbol, it.id));
-
+  const ownerItems = state.items.filter(it => state.activeOwner === 'all' || it.owner === state.activeOwner);
   if (pieChart) pieChart.destroy();
-  if (!sorted.length) return;
+  if (!ownerItems.length) return;
 
-  // Plugin voor tekst in het midden van de donut
+  let labels = [], data = [], colors = [];
+
+  if (state.chartMode === 'category') {
+    const groups = { etf: 0, crypto: 0, manual: 0 };
+    ownerItems.forEach(it => {
+      groups[it.type] = (groups[it.type] || 0) + ((it.price || 0) * (it.amount || 0));
+    });
+    const catMeta = [
+      { key: 'etf', label: "ETF's & Aandelen", color: '#10b981' },
+      { key: 'crypto', label: 'Crypto', color: '#f7931a' },
+      { key: 'manual', label: 'Cash & Overig', color: '#3b82f6' }
+    ].filter(c => groups[c.key] > 0);
+
+    labels = catMeta.map(c => c.label);
+    data = catMeta.map(c => groups[c.key]);
+    colors = catMeta.map(c => c.color);
+  } else {
+    const sorted = [...ownerItems].sort((a, b) => ((b.price || 0) * b.amount) - ((a.price || 0) * a.amount));
+    labels = sorted.map(it => state.activeOwner === 'all' ? `${it.symbol} (${OWNER_BADGES[it.owner].split(' ')[1]})` : it.symbol);
+    data = sorted.map(it => (it.price || 0) * (it.amount || 0));
+    colors = sorted.map(it => colorForItem(it));
+  }
+
   const centerTextPlugin = {
     id: 'centerText',
     afterDraw(chart) {
@@ -297,10 +437,10 @@ function renderPie(portfolioTotal) {
       ctx.textAlign = 'center';
       ctx.fillStyle = '#94a3b8';
       ctx.font = '500 11px system-ui';
-      ctx.fillText('ACTIVA', cx, cy - 8);
+      ctx.fillText(state.chartMode === 'category' ? 'CATEGORIEËN' : 'POSITIES', cx, cy - 8);
       ctx.fillStyle = '#f8fafc';
       ctx.font = '700 15px system-ui';
-      ctx.fillText(`${sorted.length} munten`, cx, cy + 12);
+      ctx.fillText(`${ownerItems.length} items`, cx, cy + 12);
       ctx.restore();
     }
   };
@@ -335,27 +475,21 @@ function renderPie(portfolioTotal) {
   });
 }
 
-// -------- Autocomplete Search
+// -------- Autocomplete Search (Crypto)
 searchInp.addEventListener('input', () => {
   clearTimeout(searchTimer);
-  selectedCoin = null;
+  selectedCrypto = null;
   const q = searchInp.value.trim();
-  if (q.length < 2) {
-    dropdown.classList.remove('open');
-    return;
-  }
+  if (q.length < 2) { dropdown.classList.remove('open'); return; }
   searchTimer = setTimeout(async () => {
     const list = await geckoSearch(q);
-    if (!list.length) {
-      dropdown.innerHTML = `<div class="drop-item" style="color:var(--muted)">Geen resultaten</div>`;
-    } else {
-      dropdown.innerHTML = list.map(c => `
-        <div class="drop-item" data-id="${c.id}" data-symbol="${c.symbol}" data-name="${c.name}" data-thumb="${c.thumb}">
-          <img src="${c.thumb}" alt="">
-          <div><strong>${c.name}</strong> <span style="color:var(--muted);font-size:12px">${c.symbol}</span></div>
-        </div>
-      `).join('');
-    }
+    dropdown.innerHTML = list.length
+      ? list.map(c => `
+          <div class="drop-item" data-id="${c.id}" data-symbol="${c.symbol}" data-name="${c.name}" data-thumb="${c.thumb}">
+            <img src="${c.thumb}" alt="">
+            <div><strong>${c.name}</strong> <span style="color:var(--muted);font-size:12px">${c.symbol}</span></div>
+          </div>`).join('')
+      : `<div class="drop-item" style="color:var(--muted)">Geen resultaten</div>`;
     dropdown.classList.add('open');
   }, 380);
 });
@@ -363,13 +497,13 @@ searchInp.addEventListener('input', () => {
 dropdown.addEventListener('click', (e) => {
   const item = e.target.closest('.drop-item[data-id]');
   if (!item) return;
-  selectedCoin = {
+  selectedCrypto = {
     id: item.dataset.id,
     symbol: item.dataset.symbol,
     name: item.dataset.name,
     thumb: item.dataset.thumb
   };
-  searchInp.value = `${selectedCoin.name} (${selectedCoin.symbol})`;
+  searchInp.value = `${selectedCrypto.name} (${selectedCrypto.symbol})`;
   dropdown.classList.remove('open');
 });
 
@@ -378,55 +512,90 @@ document.addEventListener('click', (e) => {
 });
 
 // -------- CRUD & DCA
-async function saveCoin(isDca = false) {
-  if (!selectedCoin) {
-    toast('⚠️ Kies eerst een munt uit de zoeklijst');
-    searchInp.focus();
-    return;
-  }
-  const amount = parseFloat(amountInp.value || '0');
-  const avgCost = parseFloat(avgCostInp.value || '0');
-  if (!amount || amount <= 0) {
-    toast('⚠️ Vul een geldige hoeveelheid in');
-    amountInp.focus();
-    return;
+async function savePosition(isDca = false) {
+  const type = assetTypeSel.value;
+  const owner = assetOwnerSel.value;
+  const cost = parseFloat(avgCostInp.value || '0');
+
+  let uid, id, symbol, name, amount, price = 0, icon = '';
+
+  if (type === 'crypto') {
+    if (!selectedCrypto) { toast('⚠️ Kies eerst een cryptomunt uit de lijst'); return; }
+    amount = parseFloat(amountInp.value || '0');
+    if (!amount || amount <= 0) { toast('⚠️ Vul een geldige hoeveelheid in'); return; }
+    id = selectedCrypto.id;
+    symbol = selectedCrypto.symbol;
+    name = selectedCrypto.name;
+    icon = selectedCrypto.thumb || '';
+    uid = `crypto_${id}_${owner}`;
+  } else if (type === 'etf') {
+    const ticker = etfTickerInp.value.trim().toUpperCase();
+    if (!ticker) { toast('⚠️ Vul een beursticker in (bv. VWCE.DE)'); return; }
+    amount = parseFloat(amountInp.value || '0');
+    if (!amount || amount <= 0) { toast('⚠️ Vul een geldig aantal stuks in'); return; }
+    id = ticker;
+    symbol = ticker;
+    name = etfNameInp.value.trim() || ticker;
+    uid = `etf_${ticker}_${owner}`;
+  } else {
+    const mName = manualNameInp.value.trim();
+    const mVal = parseFloat(manualValueInp.value || '0');
+    if (!mName) { toast('⚠️ Geef deze bezitting een naam'); return; }
+    id = mName.toLowerCase().replace(/\s+/g, '-');
+    symbol = mName.slice(0, 6).toUpperCase();
+    name = mName;
+    amount = 1;
+    price = mVal;
+    uid = editingId || `manual_${id}_${owner}_${Date.now()}`;
   }
 
-  let it = state.items.find(x => x.id === selectedCoin.id);
-  if (!it) {
-    it = {
-      id: selectedCoin.id,
-      symbol: selectedCoin.symbol,
-      name: selectedCoin.name,
-      amount,
-      avgCost: avgCost || 0,
-      price: 0,
-      icon: selectedCoin.thumb || '',
+  let existing = state.items.find(x => x.uid === (editingId || uid));
+
+  if (!existing) {
+    state.items.push({
+      uid, id, type, owner, symbol, name, amount,
+      avgCost: cost || 0,
+      price,
+      icon,
       change24h: 0,
       change7d: 0,
       spark7d: [],
-      history: [{ date: new Date().toISOString().slice(0, 10), amount, price: avgCost || 0 }]
-    };
-    state.items.push(it);
-    toast(`✅ ${it.symbol} toegevoegd`);
+      history: [{ date: new Date().toISOString().slice(0, 10), amount, price: cost || 0 }]
+    });
+    toast(`✅ ${name} toegevoegd aan ${OWNER_BADGES[owner]}`);
   } else if (isDca) {
-    const totalAmount = (it.amount || 0) + amount;
-    const totalInvested = ((it.amount || 0) * (it.avgCost || 0)) + (amount * (avgCost || 0));
-    it.amount = totalAmount;
-    it.avgCost = totalAmount > 0 ? (totalInvested / totalAmount) : 0;
-    it.history = it.history || [];
-    it.history.push({ date: new Date().toISOString().slice(0, 10), amount, price: avgCost || 0 });
-    toast(`📈 Bijkoop verwerkt! Nieuwe GAK: ${money(it.avgCost)}`);
+    if (type === 'manual') {
+      existing.price = (existing.price || 0) + price;
+      existing.avgCost = (existing.avgCost || 0) + (cost || 0);
+    } else {
+      const totalAmount = (existing.amount || 0) + amount;
+      const totalInvested = ((existing.amount || 0) * (existing.avgCost || 0)) + (amount * (cost || 0));
+      existing.amount = totalAmount;
+      existing.avgCost = totalAmount > 0 ? (totalInvested / totalAmount) : 0;
+    }
+    existing.history = existing.history || [];
+    existing.history.push({ date: new Date().toISOString().slice(0, 10), amount, price: cost || 0 });
+    toast(`📈 Bijkoop verwerkt voor ${existing.name}!`);
   } else {
-    it.amount = amount;
-    it.avgCost = avgCost || 0;
-    toast(`✅ ${it.symbol} bijgewerkt`);
+    existing.owner = owner;
+    existing.name = name;
+    existing.amount = amount;
+    existing.avgCost = cost || 0;
+    if (type === 'manual') existing.price = price;
+    toast(`✅ ${existing.name} bijgewerkt`);
   }
 
-  selectedCoin = null;
+  // Formulier resetten
+  editingId = null;
+  selectedCrypto = null;
   searchInp.value = '';
+  etfTickerInp.value = '';
+  etfNameInp.value = '';
+  manualNameInp.value = '';
+  manualValueInp.value = '';
   amountInp.value = '';
   avgCostInp.value = '';
+
   save();
   await refreshPrices();
 }
@@ -434,44 +603,79 @@ async function saveCoin(isDca = false) {
 assetsDiv.addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-action]');
   if (!btn) return;
-  const id = btn.dataset.id;
+  const uid = btn.dataset.uid;
   if (btn.dataset.action === 'remove') {
-    state.items = state.items.filter(x => x.id !== id);
+    state.items = state.items.filter(x => x.uid !== uid);
     save();
     renderAll();
     toast('🗑️ Positie verwijderd');
   } else if (btn.dataset.action === 'edit') {
-    const it = state.items.find(x => x.id === id);
+    const it = state.items.find(x => x.uid === uid);
     if (!it) return;
-    selectedCoin = { id: it.id, symbol: it.symbol, name: it.name, thumb: it.icon };
-    searchInp.value = `${it.name} (${it.symbol})`;
-    amountInp.value = it.amount;
-    avgCostInp.value = it.avgCost || '';
+    editingId = it.uid;
+    assetTypeSel.value = it.type;
+    assetOwnerSel.value = it.owner;
+    syncFormFields();
+
+    if (it.type === 'crypto') {
+      selectedCrypto = { id: it.id, symbol: it.symbol, name: it.name, thumb: it.icon };
+      searchInp.value = `${it.name} (${it.symbol})`;
+      amountInp.value = it.amount;
+      avgCostInp.value = it.avgCost || '';
+    } else if (it.type === 'etf') {
+      etfTickerInp.value = it.id;
+      etfNameInp.value = it.name;
+      amountInp.value = it.amount;
+      avgCostInp.value = it.avgCost || '';
+    } else {
+      manualNameInp.value = it.name;
+      manualValueInp.value = it.price;
+      avgCostInp.value = it.avgCost || '';
+    }
     window.scrollTo({ top: 0, behavior: 'smooth' });
-    toast(`✏️ ${it.symbol} geladen om te bewerken`);
+    toast(`✏️ ${it.name} geladen om te bewerken`);
   }
 });
 
-$("#addBtn").addEventListener('click', () => saveCoin(false));
-$("#dcaBtn").addEventListener('click', () => saveCoin(true));
-$("#sortSel").addEventListener('change', () => {
-  state.sortBy = sortSel.value;
+$("#addBtn").addEventListener('click', () => savePosition(false));
+$("#dcaBtn").addEventListener('click', () => savePosition(true));
+
+// Tabs & Filters
+$("#ownerTabs").addEventListener('click', (e) => {
+  const tab = e.target.closest('.tab');
+  if (!tab) return;
+  state.activeOwner = tab.dataset.owner;
+  // Zet het formulier standaard op dezelfde eigenaar (tenzij 'all')
+  if (state.activeOwner !== 'all') assetOwnerSel.value = state.activeOwner;
+  document.querySelectorAll('#ownerTabs .tab').forEach(t => t.classList.toggle('active', t === tab));
   save();
   renderAll();
 });
+
+$("#chartModeToggle").addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-mode]');
+  if (!btn) return;
+  state.chartMode = btn.dataset.mode;
+  document.querySelectorAll('#chartModeToggle button').forEach(b => b.classList.toggle('active', b === btn));
+  save();
+  renderAll();
+});
+
+sortSel.addEventListener('change', () => { state.sortBy = sortSel.value; save(); renderAll(); });
+typeFilter.addEventListener('change', () => { state.typeFilter = typeFilter.value; save(); renderAll(); });
 
 $("#privacyBtn").addEventListener('click', () => {
   state.privacy = !state.privacy;
   document.body.classList.toggle('blur-mode', state.privacy);
   save();
-  renderPie(state.items.reduce((acc, it) => acc + (it.price || 0) * (it.amount || 0), 0));
+  renderAll();
 });
 
 // -------- Instellingen & Backup
 $("#saveSettings").addEventListener('click', async () => {
   const prev = state.fiat;
   state.fiat = fiatSel.value;
-  curLabel.textContent = state.fiat.toUpperCase();
+  document.querySelectorAll('.curLabel').forEach(el => el.textContent = state.fiat.toUpperCase());
   state.refreshMins = Math.max(1, parseInt(refreshInp.value || '5', 10));
   state.showSpark = toggleSpark.checked;
   state.showBadges = toggleBadges.checked;
@@ -481,7 +685,10 @@ $("#saveSettings").addEventListener('click', async () => {
     const fx = await fxRateEURUSD();
     if (fx) {
       const factor = (prev === 'eur' && state.fiat === 'usd') ? fx : (1 / fx);
-      state.items.forEach(it => it.avgCost = (it.avgCost || 0) * factor);
+      state.items.forEach(it => {
+        it.avgCost = (it.avgCost || 0) * factor;
+        if (it.type === 'manual') it.price = (it.price || 0) * factor;
+      });
       save();
     }
   }
@@ -490,7 +697,7 @@ $("#saveSettings").addEventListener('click', async () => {
 });
 
 $("#refreshNow").addEventListener('click', () => {
-  toast('↻ Koersen verversen...');
+  toast('↻ Live koersen ophalen...');
   refreshPrices();
 });
 
@@ -499,7 +706,7 @@ $("#exportBtn").addEventListener('click', () => {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `holdings-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  a.download = `family-networth-${new Date().toISOString().slice(0, 10)}.json`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
   toast('💾 Back-up gedownload');
@@ -518,18 +725,14 @@ $("#importFile").addEventListener('change', e => {
         renderAll();
         refreshPrices();
         toast('✅ Back-up geïmporteerd');
-      } else {
-        toast('⚠️ Ongeldig bestand');
-      }
-    } catch {
-      toast('⚠️ Kon JSON niet lezen');
-    }
+      } else { toast('⚠️ Ongeldig bestand'); }
+    } catch { toast('⚠️ Kon JSON niet lezen'); }
   };
   reader.readAsText(f);
 });
 
 $("#clearBtn").addEventListener('click', () => {
-  if (confirm('Weet je zeker dat je alle posities wilt wissen?')) {
+  if (confirm('Weet je zeker dat je alle gezinsdata wilt wissen?')) {
     state.items = [];
     save();
     renderAll();
@@ -559,25 +762,12 @@ window.addEventListener('beforeinstallprompt', (e) => {
   };
 });
 
-$("#loadSample").addEventListener('click', async () => {
-  state.items = [
-    { id: 'bitcoin', symbol: 'BTC', name: 'Bitcoin', amount: 0.02598515, avgCost: 82000, price: 0, icon: '', change24h: 0, change7d: 0, spark7d: [] },
-    { id: 'ethereum', symbol: 'ETH', name: 'Ethereum', amount: 0.2464598, avgCost: 2600, price: 0, icon: '', change24h: 0, change7d: 0, spark7d: [] },
-    { id: 'cardano', symbol: 'ADA', name: 'Cardano', amount: 406.047, avgCost: 0.78, price: 0, icon: '', change24h: 0, change7d: 0, spark7d: [] },
-    { id: 'solana', symbol: 'SOL', name: 'Solana', amount: 1.1452, avgCost: 128, price: 0, icon: '', change24h: 0, change7d: 0, spark7d: [] },
-    { id: 'enjincoin', symbol: 'ENJ', name: 'Enjin', amount: 1729.2, avgCost: 0.20, price: 0, icon: '', change24h: 0, change7d: 0, spark7d: [] }
-  ];
-  save();
-  await refreshPrices();
-  toast('🧪 Voorbeeldportfolio geladen');
-});
-
-// -------- Live Prices Refresh
+// -------- Live Koersen Verversen (Crypto + ETF's)
 async function refreshPrices() {
-  if (state.items.length === 0) {
+  const liveItems = state.items.filter(it => it.type === 'crypto' || it.type === 'etf');
+  if (liveItems.length === 0) {
     renderAll();
-    if (pieChart) pieChart.destroy();
-    statusNote.textContent = 'Geen actieve posities';
+    statusNote.textContent = state.items.length ? 'Manueel bijgewerkt' : 'Geen posities';
     return;
   }
 
@@ -585,20 +775,40 @@ async function refreshPrices() {
   statusNote.textContent = 'Koersen ophalen...';
 
   try {
-    const ids = state.items.map(it => it.id);
-    const markets = await geckoMarketsBatch(ids, state.fiat);
-    const map = new Map(markets.map(m => [m.id, m]));
+    // 1. Crypto batch via CoinGecko
+    const cryptoIds = [...new Set(state.items.filter(it => it.type === 'crypto').map(it => it.id))];
+    if (cryptoIds.length) {
+      const markets = await geckoMarketsBatch(cryptoIds, state.fiat);
+      const map = new Map(markets.map(m => [m.id, m]));
+      state.items.forEach(it => {
+        if (it.type === 'crypto' && map.has(it.id)) {
+          const m = map.get(it.id);
+          it.price = m.current_price ?? it.price;
+          it.icon = m.image || it.icon;
+          it.change24h = m.price_change_percentage_24h ?? it.change24h;
+          it.change7d = m.price_change_percentage_7d_in_currency ?? it.change7d;
+          it.spark7d = m.sparkline_in_7d?.price || it.spark7d;
+        }
+      });
+    }
 
-    state.items.forEach(it => {
-      const m = map.get(it.id);
-      if (m) {
-        it.price = m.current_price ?? it.price;
-        it.icon = m.image || it.icon;
-        it.change24h = m.price_change_percentage_24h ?? it.change24h;
-        it.change7d = m.price_change_percentage_7d_in_currency ?? it.change7d;
-        it.spark7d = m.sparkline_in_7d?.price || it.spark7d;
-      }
-    });
+    // 2. ETF's / Aandelen via Yahoo Finance
+    const etfTickers = [...new Set(state.items.filter(it => it.type === 'etf').map(it => it.id))];
+    for (const ticker of etfTickers) {
+      try {
+        const q = await fetchYahooQuote(ticker, state.fiat);
+        if (q && q.price > 0) {
+          state.items.forEach(it => {
+            if (it.type === 'etf' && it.id === ticker) {
+              it.price = q.price;
+              it.change24h = q.change24h;
+              it.change7d = q.change7d;
+              it.spark7d = q.spark7d;
+            }
+          });
+        }
+      } catch {}
+    }
 
     const now = new Date();
     state.lastUpdated = now.toLocaleTimeString('nl-BE', { hour: '2-digit', minute: '2-digit' });
