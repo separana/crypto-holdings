@@ -1,4 +1,4 @@
-/* Family Net Worth v6.2 - Direct Twelve Data ETF API (No CORS Proxy) + CoinGecko */
+/* Family Net Worth v6.3 - Direct Twelve Data /quote & /price ETF API + CoinGecko */
 const $ = (s) => document.querySelector(s);
 
 const assetsDiv = $("#assets");
@@ -125,7 +125,7 @@ function toast(msg) {
   t.textContent = msg;
   t.classList.add('show');
   clearTimeout(t._timer);
-  t._timer = setTimeout(() => t.classList.remove('show'), 3000);
+  t._timer = setTimeout(() => t.classList.remove('show'), 3200);
 }
 
 function fmt(n) {
@@ -206,7 +206,6 @@ async function twelveSearch(q) {
     if (!r.ok) return [];
     const j = await r.json();
     if (!Array.isArray(j.data)) return [];
-    // Sorteer Europese beurzen (XETR, Euronext, MIL) bovenaan
     const euExchanges = ['XETR', 'XAMS', 'XBRU', 'XPAR', 'XMIL', 'LSE'];
     return j.data
       .filter(x => x.instrument_type === 'ETF' || x.instrument_type === 'Common Stock')
@@ -230,29 +229,32 @@ async function fetchTwelveQuote(id, targetFiat) {
     toast('⚠️ Vul eerst je Twelve Data API Key in bij Instellingen');
     return null;
   }
-  // id heeft formaat "VWCE:XETR" of "VWCE"
   const [sym, mic] = id.split(':');
   const exParam = mic ? `&mic_code=${encodeURIComponent(mic)}` : '';
-  const url = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(sym)}${exParam}&interval=1day&outputsize=8&apikey=${encodeURIComponent(state.twelveKey)}`;
+  const keyParam = `&apikey=${encodeURIComponent(state.twelveKey)}`;
 
-  const r = await fetch(url);
-  if (!r.ok) return null;
-  const j = await r.json();
-  if (j.status === 'error' || !Array.isArray(j.values) || !j.values.length) {
-    toast(`⚠️ Twelve Data: ${j.message || 'Ticker niet gevonden'}`);
+  let price = 0, change24h = 0, quoteCur = 'eur';
+  try {
+    const r = await fetch(`https://api.twelvedata.com/quote?symbol=${encodeURIComponent(sym)}${exParam}${keyParam}`);
+    const j = await r.json();
+    if (j && j.close && j.status !== 'error') {
+      price = parseFloat(j.close);
+      change24h = parseFloat(j.percent_change || '0');
+      quoteCur = (j.currency || 'EUR').toLowerCase();
+    } else {
+      const r2 = await fetch(`https://api.twelvedata.com/price?symbol=${encodeURIComponent(sym)}${exParam}${keyParam}`);
+      const j2 = await r2.json();
+      if (j2 && j2.price) {
+        price = parseFloat(j2.price);
+      } else {
+        toast(`⚠️ Twelve Data: ${j.message || j2.message || 'Geen koers beschikbaar op gratis plan'}`);
+        return null;
+      }
+    }
+  } catch {
     return null;
   }
 
-  // Twelve Data levert nieuwste bovenaan; keer om voor sparkline
-  const series = [...j.values].reverse();
-  const closes = series.map(v => parseFloat(v.close)).filter(v => !isNaN(v));
-  let price = closes[closes.length - 1] || 0;
-  const prevClose = closes.length > 1 ? closes[closes.length - 2] : price;
-  const change24h = prevClose > 0 ? ((price - prevClose) / prevClose) * 100 : 0;
-  const first7d = closes[0] || price;
-  const change7d = first7d > 0 ? ((price - first7d) / first7d) * 100 : 0;
-
-  const quoteCur = (j.meta?.currency || 'EUR').toLowerCase();
   if (quoteCur !== targetFiat && (quoteCur === 'eur' || quoteCur === 'usd')) {
     const fx = await fxRateEURUSD();
     if (fx) {
@@ -260,7 +262,7 @@ async function fetchTwelveQuote(id, targetFiat) {
     }
   }
 
-  return { price, change24h, change7d, spark7d: closes };
+  return { price, change24h, change7d: change24h, spark7d: [] };
 }
 
 async function fxRateEURUSD() {
