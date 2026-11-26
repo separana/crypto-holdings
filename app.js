@@ -1,4 +1,4 @@
-/* Family Net Worth v6.1 - Multi-Owner, Live ETF Search & Quotes, Crypto & Manual Assets */
+/* Family Net Worth v6.2 - Direct Twelve Data ETF API (No CORS Proxy) + CoinGecko */
 const $ = (s) => document.querySelector(s);
 
 const assetsDiv = $("#assets");
@@ -12,6 +12,7 @@ const statusNote = $("#statusNote");
 const pieWrap = $("#pieWrap");
 const pieCtx = document.getElementById('pie').getContext('2d');
 
+const twelveKeyInp = $("#twelveKey");
 const fiatSel = $("#fiat");
 const refreshInp = $("#refresh");
 const toggleSpark = $("#toggleSpark");
@@ -59,6 +60,7 @@ const TYPE_LABELS = {
 
 let state = {
   fiat: 'eur',
+  twelveKey: '',
   refreshMins: 5,
   showSpark: true,
   showBadges: true,
@@ -98,6 +100,7 @@ function load() {
     try { state = Object.assign(state, JSON.parse(raw)); } catch {}
   }
 
+  twelveKeyInp.value = state.twelveKey || '';
   fiatSel.value = state.fiat || 'eur';
   document.querySelectorAll('.curLabel').forEach(el => el.textContent = (state.fiat || 'eur').toUpperCase());
   refreshInp.value = state.refreshMins || 5;
@@ -122,7 +125,7 @@ function toast(msg) {
   t.textContent = msg;
   t.classList.add('show');
   clearTimeout(t._timer);
-  t._timer = setTimeout(() => t.classList.remove('show'), 2800);
+  t._timer = setTimeout(() => t.classList.remove('show'), 3000);
 }
 
 function fmt(n) {
@@ -150,9 +153,8 @@ function colorForItem(it) {
     'ADA': '#3b82f6',
     'ENJ': '#8b5cf6',
     'VWCE': '#10b981',
-    'VWCE.DE': '#10b981',
-    'SPYI.DE': '#06b6d4',
-    'EXUS.DE': '#6366f1'
+    'SPYI': '#06b6d4',
+    'EXUS': '#6366f1'
   };
   return map[s] || seedColor(it.uid || s || 'asset');
 }
@@ -174,7 +176,7 @@ assetTypeSel.addEventListener('change', () => {
 });
 syncFormFields();
 
-// -------- APIs: CoinGecko (Crypto) & Yahoo Finance (ETF / Aandelen)
+// -------- APIs: CoinGecko (Crypto) & Twelve Data (ETF / Aandelen)
 async function geckoSearch(q) {
   try {
     const r = await fetch(`https://api.coingecko.com/api/v3/search?query=${encodeURIComponent(q)}`);
@@ -197,50 +199,60 @@ async function geckoMarketsBatch(ids, vs) {
   return r.json();
 }
 
-async function fetchProxiedJson(targetUrl) {
-  const proxies = [
-    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`,
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`
-  ];
-  for (const url of proxies) {
-    try {
-      const r = await fetch(url);
-      if (!r.ok) continue;
-      const text = await r.text();
-      return JSON.parse(text);
-    } catch {}
+async function twelveSearch(q) {
+  const url = `https://api.twelvedata.com/symbol_search?symbol=${encodeURIComponent(q)}&outputsize=12`;
+  try {
+    const r = await fetch(url);
+    if (!r.ok) return [];
+    const j = await r.json();
+    if (!Array.isArray(j.data)) return [];
+    // Sorteer Europese beurzen (XETR, Euronext, MIL) bovenaan
+    const euExchanges = ['XETR', 'XAMS', 'XBRU', 'XPAR', 'XMIL', 'LSE'];
+    return j.data
+      .filter(x => x.instrument_type === 'ETF' || x.instrument_type === 'Common Stock')
+      .sort((a, b) => {
+        const aEu = euExchanges.includes(a.mic_code) ? 0 : 1;
+        const bEu = euExchanges.includes(b.mic_code) ? 0 : 1;
+        return aEu - bEu;
+      })
+      .map(x => ({
+        symbol: x.symbol,
+        mic: x.mic_code || x.exchange,
+        exchange: x.exchange,
+        currency: x.currency || 'EUR',
+        name: x.instrument_name
+      }));
+  } catch { return []; }
+}
+
+async function fetchTwelveQuote(id, targetFiat) {
+  if (!state.twelveKey) {
+    toast('⚠️ Vul eerst je Twelve Data API Key in bij Instellingen');
+    return null;
   }
-  return null;
-}
+  // id heeft formaat "VWCE:XETR" of "VWCE"
+  const [sym, mic] = id.split(':');
+  const exParam = mic ? `&mic_code=${encodeURIComponent(mic)}` : '';
+  const url = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(sym)}${exParam}&interval=1day&outputsize=8&apikey=${encodeURIComponent(state.twelveKey)}`;
 
-async function yahooSearch(q) {
-  const url = `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=10&newsCount=0`;
-  const j = await fetchProxiedJson(url);
-  if (!j?.quotes?.length) return [];
-  return j.quotes
-    .filter(x => x.quoteType === 'ETF' || x.quoteType === 'EQUITY' || x.quoteType === 'MUTUALFUND')
-    .map(x => ({
-      symbol: x.symbol,
-      name: x.shortname || x.longname || x.symbol,
-      exch: x.exchDisp || x.exchange || ''
-    }));
-}
+  const r = await fetch(url);
+  if (!r.ok) return null;
+  const j = await r.json();
+  if (j.status === 'error' || !Array.isArray(j.values) || !j.values.length) {
+    toast(`⚠️ Twelve Data: ${j.message || 'Ticker niet gevonden'}`);
+    return null;
+  }
 
-async function fetchYahooQuote(ticker, targetFiat) {
-  const targetUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=7d`;
-  const j = await fetchProxiedJson(targetUrl);
-  const res = j?.chart?.result?.[0];
-  if (!res) return null;
-
-  const meta = res.meta;
-  const closes = (res.indicators?.quote?.[0]?.close || []).filter(v => v != null);
-  let price = meta.regularMarketPrice || closes[closes.length - 1] || 0;
-  const prevClose = meta.chartPreviousClose || closes[0] || price;
+  // Twelve Data levert nieuwste bovenaan; keer om voor sparkline
+  const series = [...j.values].reverse();
+  const closes = series.map(v => parseFloat(v.close)).filter(v => !isNaN(v));
+  let price = closes[closes.length - 1] || 0;
+  const prevClose = closes.length > 1 ? closes[closes.length - 2] : price;
   const change24h = prevClose > 0 ? ((price - prevClose) / prevClose) * 100 : 0;
   const first7d = closes[0] || price;
   const change7d = first7d > 0 ? ((price - first7d) / first7d) * 100 : 0;
 
-  const quoteCur = (meta.currency || 'EUR').toLowerCase();
+  const quoteCur = (j.meta?.currency || 'EUR').toLowerCase();
   if (quoteCur !== targetFiat && (quoteCur === 'eur' || quoteCur === 'usd')) {
     const fx = await fxRateEURUSD();
     if (fx) {
@@ -533,7 +545,7 @@ dropdown.addEventListener('click', (e) => {
   dropdown.classList.remove('open');
 });
 
-// -------- Autocomplete Search: ETF / Aandeel
+// -------- Autocomplete Search: ETF / Aandeel (Twelve Data)
 etfSearchInp.addEventListener('input', () => {
   clearTimeout(etfTimer);
   selectedEtf = null;
@@ -543,27 +555,28 @@ etfSearchInp.addEventListener('input', () => {
   etfDropdown.classList.add('open');
 
   etfTimer = setTimeout(async () => {
-    const list = await yahooSearch(q);
+    const list = await twelveSearch(q);
     etfDropdown.innerHTML = list.length
       ? list.map(c => `
-          <div class="drop-item" data-symbol="${c.symbol}" data-name="${c.name}">
+          <div class="drop-item" data-symbol="${c.symbol}" data-mic="${c.mic}" data-name="${c.name}">
             <div>
               <strong>${c.symbol}</strong> <span style="color:var(--muted);font-size:12px">${c.name}</span>
             </div>
-            <span class="tag">${c.exch}</span>
+            <span class="tag">${c.mic} • ${c.currency}</span>
           </div>`).join('')
-      : `<div class="drop-item" style="color:var(--muted)">Geen resultaten — typ evt. exacte ticker (bv. VWCE.DE)</div>`;
-  }, 420);
+      : `<div class="drop-item" style="color:var(--muted)">Geen resultaten gevonden</div>`;
+  }, 380);
 });
 
 etfDropdown.addEventListener('click', (e) => {
   const item = e.target.closest('.drop-item[data-symbol]');
   if (!item) return;
   selectedEtf = {
+    id: `${item.dataset.symbol}:${item.dataset.mic}`,
     symbol: item.dataset.symbol,
     name: item.dataset.name
   };
-  etfSearchInp.value = `${selectedEtf.symbol} — ${selectedEtf.name}`;
+  etfSearchInp.value = `${selectedEtf.symbol} (${item.dataset.mic}) — ${selectedEtf.name}`;
   etfDropdown.classList.remove('open');
 });
 
@@ -592,14 +605,23 @@ async function savePosition(isDca = false) {
     icon = selectedCrypto.thumb || '';
     uid = `crypto_${id}_${owner}`;
   } else if (type === 'etf') {
-    const ticker = selectedEtf ? selectedEtf.symbol : etfSearchInp.value.trim().toUpperCase();
-    if (!ticker) { toast('⚠️ Zoek en kies eerst een ETF of aandeel'); return; }
+    if (!selectedEtf && !etfSearchInp.value.trim()) {
+      toast('⚠️ Zoek en kies eerst een ETF uit de lijst');
+      return;
+    }
     amount = parseFloat(amountInp.value || '0');
     if (!amount || amount <= 0) { toast('⚠️ Vul een geldig aantal stuks in'); return; }
-    id = ticker;
-    symbol = ticker;
-    name = selectedEtf ? selectedEtf.name : ticker;
-    uid = `etf_${ticker}_${owner}`;
+    if (selectedEtf) {
+      id = selectedEtf.id;
+      symbol = selectedEtf.symbol;
+      name = selectedEtf.name;
+    } else {
+      const rawSym = etfSearchInp.value.trim().toUpperCase().replace('.DE', ':XETR');
+      id = rawSym;
+      symbol = rawSym.split(':')[0];
+      name = symbol;
+    }
+    uid = `etf_${id}_${owner}`;
   } else {
     const mName = manualNameInp.value.trim();
     const mVal = parseFloat(manualValueInp.value || '0');
@@ -685,8 +707,8 @@ assetsDiv.addEventListener('click', (e) => {
       amountInp.value = it.amount;
       avgCostInp.value = it.avgCost || '';
     } else if (it.type === 'etf') {
-      selectedEtf = { symbol: it.id, name: it.name };
-      etfSearchInp.value = `${it.id} — ${it.name}`;
+      selectedEtf = { id: it.id, symbol: it.symbol, name: it.name };
+      etfSearchInp.value = `${it.symbol} — ${it.name}`;
       amountInp.value = it.amount;
       avgCostInp.value = it.avgCost || '';
     } else {
@@ -735,6 +757,7 @@ $("#privacyBtn").addEventListener('click', () => {
 // -------- Instellingen & Backup
 $("#saveSettings").addEventListener('click', async () => {
   const prev = state.fiat;
+  state.twelveKey = twelveKeyInp.value.trim();
   state.fiat = fiatSel.value;
   document.querySelectorAll('.curLabel').forEach(el => el.textContent = state.fiat.toUpperCase());
   state.refreshMins = Math.max(1, parseInt(refreshInp.value || '5', 10));
@@ -852,13 +875,13 @@ async function refreshPrices() {
       });
     }
 
-    const etfTickers = [...new Set(state.items.filter(it => it.type === 'etf').map(it => it.id))];
-    for (const ticker of etfTickers) {
+    const etfIds = [...new Set(state.items.filter(it => it.type === 'etf').map(it => it.id))];
+    for (const id of etfIds) {
       try {
-        const q = await fetchYahooQuote(ticker, state.fiat);
+        const q = await fetchTwelveQuote(id, state.fiat);
         if (q && q.price > 0) {
           state.items.forEach(it => {
-            if (it.type === 'etf' && it.id === ticker) {
+            if (it.type === 'etf' && it.id === id) {
               it.price = q.price;
               it.change24h = q.change24h;
               it.change7d = q.change7d;
