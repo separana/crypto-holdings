@@ -1,4 +1,4 @@
-/* Family Net Worth v6.5 - Built-in Twelve Data Key + Multi-Fallback ETFs & CoinGecko */
+/* Family Net Worth v6.6 - Live ETF's via Finnhub + CoinGecko Crypto */
 const $ = (s) => document.querySelector(s);
 
 const assetsDiv = $("#assets");
@@ -33,12 +33,11 @@ const avgCostInp = $("#avgCost");
 let pieChart;
 let deferredPrompt;
 let searchTimer;
-let etfTimer;
 let selectedCrypto = null;
 let selectedEtf = null;
 let editingId = null;
 
-const DEFAULT_TWELVE_KEY = 'f43cacd88f364feeb688f0c60a84bf7c';
+const FINNHUB_KEY = 'dc415s9r01qk29kdtv7gdc415s9r01qk29kdtv80';
 
 const OWNER_LABELS = {
   all: 'Totale Gezinswaarde',
@@ -70,7 +69,6 @@ const POPULAR_ETFS = [
 
 let state = {
   fiat: 'eur',
-  twelveKey: DEFAULT_TWELVE_KEY,
   refreshMins: 5,
   showSpark: true,
   showBadges: true,
@@ -109,9 +107,6 @@ function load() {
   } else {
     try { state = Object.assign(state, JSON.parse(raw)); } catch {}
   }
-
-  if (!state.twelveKey) state.twelveKey = DEFAULT_TWELVE_KEY;
-  if ($("#twelveKey")) $("#twelveKey").value = state.twelveKey;
 
   fiatSel.value = state.fiat || 'eur';
   document.querySelectorAll('.curLabel').forEach(el => el.textContent = (state.fiat || 'eur').toUpperCase());
@@ -210,59 +205,35 @@ async function geckoMarketsBatch(ids, vs) {
   return r.json();
 }
 
-// -------- APIs: ETF / Aandeel (Twelve Data + Yahoo Multi-Proxy Fallback)
-async function fetchEtfQuote(rawId, targetFiat) {
-  const cleanSym = rawId.split(':')[0].replace('.DE', '').replace('.AS', '').toUpperCase();
-  const yahooTicker = rawId.includes('.') ? rawId : `${cleanSym}.DE`;
-  const key = state.twelveKey || DEFAULT_TWELVE_KEY;
+// -------- APIs: Finnhub (Direct CORS Live ETF & Stock Quotes)
+async function fetchFinnhubQuote(rawId, targetFiat) {
+  const ticker = rawId.includes(':XETR') ? rawId.replace(':XETR', '.DE') : rawId.split(':')[0].toUpperCase();
+  const url = `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(ticker)}&token=${encodeURIComponent(FINNHUB_KEY)}`;
 
-  // Poging 1: Twelve Data met symbol:XETR formaat
   try {
-    const tdUrl = `https://api.twelvedata.com/price?symbol=${encodeURIComponent(cleanSym + ':XETR')}&apikey=${encodeURIComponent(key)}`;
-    const r = await fetch(tdUrl);
+    const r = await fetch(url);
+    if (!r.ok) return null;
     const j = await r.json();
-    if (j && j.price && !isNaN(parseFloat(j.price))) {
-      return { price: parseFloat(j.price), change24h: 0, change7d: 0, spark7d: [] };
-    }
-  } catch {}
+    // Finnhub: c = current price, dp = percent change, pc = previous close
+    let price = parseFloat(j.c || '0');
+    const change24h = parseFloat(j.dp || '0');
+    if (!price || price <= 0) return null;
 
-  // Poging 2: Yahoo Finance via CORS-proxies
-  const targetUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooTicker)}?interval=1d&range=7d`;
-  const proxies = [
-    `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`,
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
-    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`
-  ];
+    // Europese tickers (.DE, .AS, .PA, .BR, .MI) noteren in EUR
+    const isEurTicker = /\.(DE|AS|PA|BR|MI)$/i.test(ticker);
+    const quoteCur = isEurTicker ? 'eur' : 'usd';
 
-  for (const url of proxies) {
-    try {
-      const r = await fetch(url);
-      if (!r.ok) continue;
-      const text = await r.text();
-      const j = JSON.parse(text);
-      const res = j?.chart?.result?.[0];
-      if (!res) continue;
-
-      const meta = res.meta;
-      const closes = (res.indicators?.quote?.[0]?.close || []).filter(v => v != null);
-      let price = meta.regularMarketPrice || closes[closes.length - 1] || 0;
-      const prevClose = meta.chartPreviousClose || closes[0] || price;
-      const change24h = prevClose > 0 ? ((price - prevClose) / prevClose) * 100 : 0;
-      const first7d = closes[0] || price;
-      const change7d = first7d > 0 ? ((price - first7d) / first7d) * 100 : 0;
-
-      const quoteCur = (meta.currency || 'EUR').toLowerCase();
-      if (quoteCur !== targetFiat && (quoteCur === 'eur' || quoteCur === 'usd')) {
-        const fx = await fxRateEURUSD();
-        if (fx) {
-          price = (quoteCur === 'usd' && targetFiat === 'eur') ? (price / fx) : (price * fx);
-        }
+    if (quoteCur !== targetFiat) {
+      const fx = await fxRateEURUSD();
+      if (fx) {
+        price = (quoteCur === 'usd' && targetFiat === 'eur') ? (price / fx) : (price * fx);
       }
-      if (price > 0) return { price, change24h, change7d, spark7d: closes };
-    } catch {}
-  }
+    }
 
-  return null;
+    return { price, change24h, change7d: change24h, spark7d: [] };
+  } catch {
+    return null;
+  }
 }
 
 async function fxRateEURUSD() {
@@ -415,7 +386,7 @@ function renderAssets(portfolioTotal) {
         <div style="display:flex;gap:5px;flex-wrap:wrap">
           ${(state.showBadges && it.type !== 'manual') ? `
             <span class="pill ${ch24 >= 0 ? 'gain' : 'loss'}">24u ${ch24 >= 0 ? '+' : ''}${fmt(ch24)}%</span>
-            <span class="pill ${ch7 >= 0 ? 'gain' : 'loss'}">7d ${ch7 >= 0 ? '+' : ''}${fmt(ch7)}%</span>
+            ${it.type === 'crypto' ? `<span class="pill ${ch7 >= 0 ? 'gain' : 'loss'}">7d ${ch7 >= 0 ? '+' : ''}${fmt(ch7)}%</span>` : ''}
           ` : `<span class="tag">${TYPE_LABELS[it.type]}</span>`}
         </div>
         ${(state.showSpark && it.type !== 'manual' && it.spark7d?.length > 1) ? `<canvas class="spark" id="spark-${idx}"></canvas>` : ''}
@@ -768,7 +739,6 @@ $("#privacyBtn").addEventListener('click', () => {
 
 $("#saveSettings").addEventListener('click', async () => {
   const prev = state.fiat;
-  if ($("#twelveKey")) state.twelveKey = $("#twelveKey").value.trim() || DEFAULT_TWELVE_KEY;
   state.fiat = fiatSel.value;
   document.querySelectorAll('.curLabel').forEach(el => el.textContent = state.fiat.toUpperCase());
   state.refreshMins = Math.max(1, parseInt(refreshInp.value || '5', 10));
@@ -889,14 +859,13 @@ async function refreshPrices() {
     const etfIds = [...new Set(state.items.filter(it => it.type === 'etf').map(it => it.id))];
     for (const id of etfIds) {
       try {
-        const q = await fetchEtfQuote(id, state.fiat);
+        const q = await fetchFinnhubQuote(id, state.fiat);
         if (q && q.price > 0) {
           state.items.forEach(it => {
             if (it.type === 'etf' && it.id === id) {
               it.price = q.price;
               it.change24h = q.change24h;
               it.change7d = q.change7d;
-              it.spark7d = q.spark7d;
             }
           });
         }
