@@ -1,4 +1,4 @@
-/* Family Net Worth v6.4 - Multi-Proxy Yahoo Finance ETFs + CoinGecko Crypto */
+/* Family Net Worth v6.5 - Multi-Proxy Yahoo Finance ETFs + CoinGecko Crypto */
 const $ = (s) => document.querySelector(s);
 
 const assetsDiv = $("#assets");
