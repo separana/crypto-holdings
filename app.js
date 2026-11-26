@@ -1,4 +1,4 @@
-/* Family Net Worth v6 - Multi-Owner (Mine / Léo / César), ETFs + Crypto + Manual Assets */
+/* Family Net Worth v6.1 - Multi-Owner, Live ETF Search & Quotes, Crypto & Manual Assets */
 const $ = (s) => document.querySelector(s);
 
 const assetsDiv = $("#assets");
@@ -23,8 +23,8 @@ const assetTypeSel = $("#assetType");
 const assetOwnerSel = $("#assetOwner");
 const searchInp = $("#search");
 const dropdown = $("#dropdown");
-const etfTickerInp = $("#etfTicker");
-const etfNameInp = $("#etfName");
+const etfSearchInp = $("#etfSearch");
+const etfDropdown = $("#etfDropdown");
 const manualNameInp = $("#manualName");
 const manualValueInp = $("#manualValue");
 const amountInp = $("#amount");
@@ -33,7 +33,9 @@ const avgCostInp = $("#avgCost");
 let pieChart;
 let deferredPrompt;
 let searchTimer;
+let etfTimer;
 let selectedCrypto = null;
+let selectedEtf = null;
 let editingId = null;
 
 const OWNER_LABELS = {
@@ -62,7 +64,7 @@ let state = {
   showBadges: true,
   privacy: false,
   activeOwner: 'all',
-  chartMode: 'category', // 'category' | 'asset'
+  chartMode: 'category',
   sortBy: 'value',
   typeFilter: 'all',
   lastUpdated: null,
@@ -75,7 +77,6 @@ function save() {
 
 function load() {
   let raw = localStorage.getItem('holdings.v6');
-  // Automatische migratie vanaf je vorige v4/v5 crypto-opslag
   if (!raw) {
     const oldRaw = localStorage.getItem('holdings.v4');
     if (oldRaw) {
@@ -159,7 +160,7 @@ function colorForItem(it) {
 // -------- Formulier wisselen op basis van Type Actief
 function syncFormFields() {
   const t = assetTypeSel.value;
-  $("#etfWrap").style.display = t === 'etf' ? 'grid' : 'none';
+  $("#etfWrap").style.display = t === 'etf' ? 'block' : 'none';
   $("#cryptoSearchWrap").style.display = t === 'crypto' ? 'block' : 'none';
   $("#manualWrap").style.display = t === 'manual' ? 'grid' : 'none';
   $("#qtyField").style.display = t === 'manual' ? 'none' : 'block';
@@ -196,30 +197,40 @@ async function geckoMarketsBatch(ids, vs) {
   return r.json();
 }
 
-async function fetchYahooQuote(ticker, targetFiat) {
-  const targetUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=7d`;
+async function fetchProxiedJson(targetUrl) {
   const proxies = [
-    `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`,
+    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`,
     `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`
   ];
-
-  let res = null;
   for (const url of proxies) {
     try {
       const r = await fetch(url);
       if (!r.ok) continue;
-      const j = await r.json();
-      if (j.chart?.result?.[0]) {
-        res = j.chart.result[0];
-        break;
-      }
+      const text = await r.text();
+      return JSON.parse(text);
     } catch {}
   }
+  return null;
+}
 
-  if (!res) {
-    toast(`⚠️ Ticker "${ticker}" niet gevonden of geblokkeerd`);
-    return null;
-  }
+async function yahooSearch(q) {
+  const url = `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=10&newsCount=0`;
+  const j = await fetchProxiedJson(url);
+  if (!j?.quotes?.length) return [];
+  return j.quotes
+    .filter(x => x.quoteType === 'ETF' || x.quoteType === 'EQUITY' || x.quoteType === 'MUTUALFUND')
+    .map(x => ({
+      symbol: x.symbol,
+      name: x.shortname || x.longname || x.symbol,
+      exch: x.exchDisp || x.exchange || ''
+    }));
+}
+
+async function fetchYahooQuote(ticker, targetFiat) {
+  const targetUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=7d`;
+  const j = await fetchProxiedJson(targetUrl);
+  const res = j?.chart?.result?.[0];
+  if (!res) return null;
 
   const meta = res.meta;
   const closes = (res.indicators?.quote?.[0]?.close || []).filter(v => v != null);
@@ -488,7 +499,7 @@ function renderPie(portfolioTotal) {
   });
 }
 
-// -------- Autocomplete Search (Crypto)
+// -------- Autocomplete Search: Crypto
 searchInp.addEventListener('input', () => {
   clearTimeout(searchTimer);
   selectedCrypto = null;
@@ -499,8 +510,10 @@ searchInp.addEventListener('input', () => {
     dropdown.innerHTML = list.length
       ? list.map(c => `
           <div class="drop-item" data-id="${c.id}" data-symbol="${c.symbol}" data-name="${c.name}" data-thumb="${c.thumb}">
-            <img src="${c.thumb}" alt="">
-            <div><strong>${c.name}</strong> <span style="color:var(--muted);font-size:12px">${c.symbol}</span></div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <img src="${c.thumb}" alt="">
+              <div><strong>${c.name}</strong> <span style="color:var(--muted);font-size:12px">${c.symbol}</span></div>
+            </div>
           </div>`).join('')
       : `<div class="drop-item" style="color:var(--muted)">Geen resultaten</div>`;
     dropdown.classList.add('open');
@@ -520,8 +533,45 @@ dropdown.addEventListener('click', (e) => {
   dropdown.classList.remove('open');
 });
 
+// -------- Autocomplete Search: ETF / Aandeel
+etfSearchInp.addEventListener('input', () => {
+  clearTimeout(etfTimer);
+  selectedEtf = null;
+  const q = etfSearchInp.value.trim();
+  if (q.length < 2) { etfDropdown.classList.remove('open'); return; }
+  etfDropdown.innerHTML = `<div class="drop-item" style="color:var(--muted)">Zoeken op beurs...</div>`;
+  etfDropdown.classList.add('open');
+
+  etfTimer = setTimeout(async () => {
+    const list = await yahooSearch(q);
+    etfDropdown.innerHTML = list.length
+      ? list.map(c => `
+          <div class="drop-item" data-symbol="${c.symbol}" data-name="${c.name}">
+            <div>
+              <strong>${c.symbol}</strong> <span style="color:var(--muted);font-size:12px">${c.name}</span>
+            </div>
+            <span class="tag">${c.exch}</span>
+          </div>`).join('')
+      : `<div class="drop-item" style="color:var(--muted)">Geen resultaten — typ evt. exacte ticker (bv. VWCE.DE)</div>`;
+  }, 420);
+});
+
+etfDropdown.addEventListener('click', (e) => {
+  const item = e.target.closest('.drop-item[data-symbol]');
+  if (!item) return;
+  selectedEtf = {
+    symbol: item.dataset.symbol,
+    name: item.dataset.name
+  };
+  etfSearchInp.value = `${selectedEtf.symbol} — ${selectedEtf.name}`;
+  etfDropdown.classList.remove('open');
+});
+
 document.addEventListener('click', (e) => {
-  if (!e.target.closest('.field')) dropdown.classList.remove('open');
+  if (!e.target.closest('.field')) {
+    dropdown.classList.remove('open');
+    etfDropdown.classList.remove('open');
+  }
 });
 
 // -------- CRUD & DCA
@@ -542,13 +592,13 @@ async function savePosition(isDca = false) {
     icon = selectedCrypto.thumb || '';
     uid = `crypto_${id}_${owner}`;
   } else if (type === 'etf') {
-    const ticker = etfTickerInp.value.trim().toUpperCase();
-    if (!ticker) { toast('⚠️ Vul een beursticker in (bv. VWCE.DE)'); return; }
+    const ticker = selectedEtf ? selectedEtf.symbol : etfSearchInp.value.trim().toUpperCase();
+    if (!ticker) { toast('⚠️ Zoek en kies eerst een ETF of aandeel'); return; }
     amount = parseFloat(amountInp.value || '0');
     if (!amount || amount <= 0) { toast('⚠️ Vul een geldig aantal stuks in'); return; }
     id = ticker;
     symbol = ticker;
-    name = etfNameInp.value.trim() || ticker;
+    name = selectedEtf ? selectedEtf.name : ticker;
     uid = `etf_${ticker}_${owner}`;
   } else {
     const mName = manualNameInp.value.trim();
@@ -600,9 +650,9 @@ async function savePosition(isDca = false) {
 
   editingId = null;
   selectedCrypto = null;
+  selectedEtf = null;
   searchInp.value = '';
-  etfTickerInp.value = '';
-  etfNameInp.value = '';
+  etfSearchInp.value = '';
   manualNameInp.value = '';
   manualValueInp.value = '';
   amountInp.value = '';
@@ -635,8 +685,8 @@ assetsDiv.addEventListener('click', (e) => {
       amountInp.value = it.amount;
       avgCostInp.value = it.avgCost || '';
     } else if (it.type === 'etf') {
-      etfTickerInp.value = it.id;
-      etfNameInp.value = it.name;
+      selectedEtf = { symbol: it.id, name: it.name };
+      etfSearchInp.value = `${it.id} — ${it.name}`;
       amountInp.value = it.amount;
       avgCostInp.value = it.avgCost || '';
     } else {
@@ -786,7 +836,6 @@ async function refreshPrices() {
   statusNote.textContent = 'Koersen ophalen...';
 
   try {
-    // 1. Crypto batch via CoinGecko
     const cryptoIds = [...new Set(state.items.filter(it => it.type === 'crypto').map(it => it.id))];
     if (cryptoIds.length) {
       const markets = await geckoMarketsBatch(cryptoIds, state.fiat);
@@ -803,7 +852,6 @@ async function refreshPrices() {
       });
     }
 
-    // 2. ETF's / Aandelen via Yahoo Finance
     const etfTickers = [...new Set(state.items.filter(it => it.type === 'etf').map(it => it.id))];
     for (const ticker of etfTickers) {
       try {
