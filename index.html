@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#090d16" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" href="icon-192.png" />
-  <title>Family Net Worth v6</title>
+  <title>Family Net Worth v6.1</title>
   <style>
     :root {
       --bg: #090d16;
@@ -47,7 +47,6 @@
     .brand-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--good); box-shadow: 0 0 12px var(--good); }
     .actions { display: flex; gap: 6px; align-items: center; }
 
-    /* Owner Tabs */
     .tabs {
       display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; margin-top: 12px;
       scrollbar-width: none;
@@ -72,7 +71,6 @@
       box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
     }
 
-    /* Hero Portfolio Card */
     .hero-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
     .hero-label { font-size: 13px; color: var(--muted); font-weight: 500; }
     .hero-val { font-size: clamp(28px, 4vw, 38px); font-weight: 800; letter-spacing: -0.8px; margin: 2px 0 6px; }
@@ -91,7 +89,6 @@
     .chart-toggle button.active { background: var(--surface-2); color: var(--text); }
     .chart-box { position: relative; height: 210px; margin: 8px 0; display: flex; align-items: center; justify-content: center; }
 
-    /* Form & Autocomplete */
     .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
     @media(max-width: 600px) { .form-grid { grid-template-columns: 1fr; } }
     .field { position: relative; }
@@ -112,7 +109,7 @@
     }
     .dropdown.open { display: block; }
     .drop-item {
-      display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+      display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px;
       cursor: pointer; border-bottom: 1px solid rgba(255,255,255,0.04);
     }
     .drop-item:hover { background: rgba(59, 130, 246, 0.15); }
@@ -126,7 +123,6 @@
     button.ghost { background: rgba(255,255,255,0.03); color: var(--muted); }
     button.icon-btn { width: auto; padding: 7px 11px; font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
 
-    /* Asset Cards */
     .assets-header { display: flex; justify-content: space-between; align-items: center; margin: 20px 0 10px; gap: 8px; flex-wrap: wrap; }
     .assets { display: grid; grid-template-columns: 1fr; gap: 12px; }
     @media(min-width: 680px) { .assets { grid-template-columns: 1fr 1fr; } }
@@ -224,7 +220,7 @@
           <div>
             <label for="assetType">Type Actief</label>
             <select id="assetType">
-              <option value="etf">📈 ETF / Aandeel (Live ticker)</option>
+              <option value="etf">📈 ETF / Aandeel (Live zoeken)</option>
               <option value="crypto">🪙 Crypto (Live CoinGecko)</option>
               <option value="manual">🏦 Spaarrekening / Overig (Manueel)</option>
             </select>
@@ -239,24 +235,21 @@
           </div>
         </div>
 
-        <!-- Dynamische invoer afhankelijk van Type -->
+        <!-- Crypto zoeken -->
         <div id="cryptoSearchWrap" class="field" style="margin-top:10px;display:none">
           <label for="search">Crypto zoeken</label>
           <input id="search" autocomplete="off" placeholder="Typ naam of ticker (bv. Bitcoin, SOL, ETH)..." />
           <div id="dropdown" class="dropdown"></div>
         </div>
 
-        <div id="etfWrap" class="form-grid" style="margin-top:10px">
-          <div>
-            <label for="etfTicker">Beurs Ticker (Yahoo Finance)</label>
-            <input id="etfTicker" placeholder="bv. VWCE.DE, SPYI.DE, EXUS.DE" />
-          </div>
-          <div>
-            <label for="etfName">Naam ETF / Aandeel</label>
-            <input id="etfName" placeholder="bv. Vanguard FTSE All-World" />
-          </div>
+        <!-- ETF / Aandeel zoeken met dropdown -->
+        <div id="etfWrap" class="field" style="margin-top:10px">
+          <label for="etfSearch">ETF / Aandeel zoeken (bv. VWCE, SPYI, EXUS)</label>
+          <input id="etfSearch" autocomplete="off" placeholder="Typ ticker of naam (bv. VWCE)..." />
+          <div id="etfDropdown" class="dropdown"></div>
         </div>
 
+        <!-- Manuele bezitting -->
         <div id="manualWrap" class="form-grid" style="margin-top:10px;display:none">
           <div>
             <label for="manualName">Naam bezitting / rekening</label>
@@ -340,15 +333,13 @@
       </div>
 
       <div style="margin-top:16px;padding:12px;border-radius:12px;background:rgba(255,255,255,0.03);font-size:12px;color:var(--muted);line-height:1.5">
-        <strong style="color:var(--text)">Populaire Europese ETF-tickers:</strong><br>
-        • <code>VWCE.DE</code> (Vanguard FTSE All-World)<br>
-        • <code>SPYI.DE</code> (SPDR MSCI ACWI IMI)<br>
-        • <code>EXUS.DE</code> (Xtrackers MSCI World ex-USA)
+        <strong style="color:var(--text)">Tip bij ETF-zoeken:</strong><br>
+        Typ <code>VWCE</code> en kies <strong>VWCE.DE</strong> (Xetra, in EUR) uit de lijst. Voor MSCI World ex-USA kies je <strong>EXUS.DE</strong> en voor ACWI IMI kies je <strong>SPYI.DE</strong>.
       </div>
     </aside>
   </div>
 
-  <footer>Live marktdata via CoinGecko & Yahoo Finance • Family Net Worth v6</footer>
+  <footer>Live marktdata via CoinGecko & Yahoo Finance • Family Net Worth v6.1</footer>
 </main>
 
 <div id="toast" class="toast"></div>
