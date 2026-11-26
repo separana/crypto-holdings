@@ -1,5 +1,5 @@
 // holdings-v4.1 - Network-First voor app-bestanden & veilige API-afhandeling
-const CACHE = 'holdings-v6';
+const CACHE = 'holdings-v6.1';
 const ASSETS = [
   './',
   './index.html',
