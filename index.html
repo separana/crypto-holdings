@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#090d16" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" href="icon-192.png" />
-  <title>Family Net Worth v6.1</title>
+  <title>Family Net Worth v6.2</title>
   <style>
     :root {
       --bg: #090d16;
@@ -220,7 +220,7 @@
           <div>
             <label for="assetType">Type Actief</label>
             <select id="assetType">
-              <option value="etf">📈 ETF / Aandeel (Live zoeken)</option>
+              <option value="etf">📈 ETF / Aandeel (Live Twelve Data)</option>
               <option value="crypto">🪙 Crypto (Live CoinGecko)</option>
               <option value="manual">🏦 Spaarrekening / Overig (Manueel)</option>
             </select>
@@ -242,7 +242,7 @@
           <div id="dropdown" class="dropdown"></div>
         </div>
 
-        <!-- ETF / Aandeel zoeken met dropdown -->
+        <!-- ETF / Aandeel zoeken -->
         <div id="etfWrap" class="field" style="margin-top:10px">
           <label for="etfSearch">ETF / Aandeel zoeken (bv. VWCE, SPYI, EXUS)</label>
           <input id="etfSearch" autocomplete="off" placeholder="Typ ticker of naam (bv. VWCE)..." />
@@ -301,6 +301,12 @@
     <!-- Rechterkolom: Instellingen -->
     <aside class="card">
       <h3 style="margin:0 0 12px;font-size:16px">Instellingen</h3>
+
+      <div style="margin-bottom:12px">
+        <label for="twelveKey">Twelve Data API Key (voor live ETF's)</label>
+        <input id="twelveKey" type="password" placeholder="Plak je gratis API key hier..." />
+      </div>
+
       <div class="form-grid">
         <div>
           <label for="fiat">Valuta</label>
@@ -334,12 +340,12 @@
 
       <div style="margin-top:16px;padding:12px;border-radius:12px;background:rgba(255,255,255,0.03);font-size:12px;color:var(--muted);line-height:1.5">
         <strong style="color:var(--text)">Tip bij ETF-zoeken:</strong><br>
-        Typ <code>VWCE</code> en kies <strong>VWCE.DE</strong> (Xetra, in EUR) uit de lijst. Voor MSCI World ex-USA kies je <strong>EXUS.DE</strong> en voor ACWI IMI kies je <strong>SPYI.DE</strong>.
+        Vul eerst je gratis Twelve Data key in en klik op <em>Instellingen toepassen</em>. Typ daarna <code>VWCE</code> en kies <strong>VWCE (XETR)</strong> (beurs van Frankfurt, in EUR).
       </div>
     </aside>
   </div>
 
-  <footer>Live marktdata via CoinGecko & Yahoo Finance • Family Net Worth v6.1</footer>
+  <footer>Live marktdata via CoinGecko & Twelve Data • Family Net Worth v6.2</footer>
 </main>
 
 <div id="toast" class="toast"></div>
