@@ -1,4 +1,4 @@
-/* Family Net Worth v6.5 - Multi-Proxy Yahoo Finance ETFs + CoinGecko Crypto */
+/* Family Net Worth v6.5 - Built-in Twelve Data Key + Multi-Fallback ETFs & CoinGecko */
 const $ = (s) => document.querySelector(s);
 
 const assetsDiv = $("#assets");
@@ -38,6 +38,8 @@ let selectedCrypto = null;
 let selectedEtf = null;
 let editingId = null;
 
+const DEFAULT_TWELVE_KEY = 'f43cacd88f364feeb688f0c60a84bf7c';
+
 const OWNER_LABELS = {
   all: 'Totale Gezinswaarde',
   mine: 'Mijn Vermogen',
@@ -57,18 +59,18 @@ const TYPE_LABELS = {
   manual: 'Cash / Overig'
 };
 
-// Populaire Europese ETF's voor directe suggesties zonder API-vertraging
 const POPULAR_ETFS = [
-  { symbol: 'VWCE.DE', mic: 'XETR', currency: 'EUR', name: 'Vanguard FTSE All-World UCITS ETF (Acc)' },
-  { symbol: 'SPYI.DE', mic: 'XETR', currency: 'EUR', name: 'SPDR MSCI ACWI IMI UCITS ETF (Acc)' },
-  { symbol: 'EXUS.DE', mic: 'XETR', currency: 'EUR', name: 'Xtrackers MSCI World ex USA UCITS ETF' },
-  { symbol: 'IWDA.AS', mic: 'XAMS', currency: 'EUR', name: 'iShares Core MSCI World UCITS ETF' },
-  { symbol: 'EMIM.AS', mic: 'XAMS', currency: 'EUR', name: 'iShares Core MSCI EM IMI UCITS ETF' },
-  { symbol: 'SXR8.DE', mic: 'XETR', currency: 'EUR', name: 'iShares Core S&P 500 UCITS ETF' }
+  { symbol: 'VWCE.DE', name: 'Vanguard FTSE All-World UCITS ETF (Acc)' },
+  { symbol: 'SPYI.DE', name: 'SPDR MSCI ACWI IMI UCITS ETF (Acc)' },
+  { symbol: 'EXUS.DE', name: 'Xtrackers MSCI World ex USA UCITS ETF' },
+  { symbol: 'IWDA.AS', name: 'iShares Core MSCI World UCITS ETF' },
+  { symbol: 'EMIM.AS', name: 'iShares Core MSCI EM IMI UCITS ETF' },
+  { symbol: 'SXR8.DE', name: 'iShares Core S&P 500 UCITS ETF' }
 ];
 
 let state = {
   fiat: 'eur',
+  twelveKey: DEFAULT_TWELVE_KEY,
   refreshMins: 5,
   showSpark: true,
   showBadges: true,
@@ -108,6 +110,9 @@ function load() {
     try { state = Object.assign(state, JSON.parse(raw)); } catch {}
   }
 
+  if (!state.twelveKey) state.twelveKey = DEFAULT_TWELVE_KEY;
+  if ($("#twelveKey")) $("#twelveKey").value = state.twelveKey;
+
   fiatSel.value = state.fiat || 'eur';
   document.querySelectorAll('.curLabel').forEach(el => el.textContent = (state.fiat || 'eur').toUpperCase());
   refreshInp.value = state.refreshMins || 5;
@@ -126,7 +131,6 @@ function load() {
 }
 load();
 
-// -------- UI Helpers
 function toast(msg) {
   const t = $("#toast");
   t.textContent = msg;
@@ -183,7 +187,7 @@ assetTypeSel.addEventListener('change', () => {
 });
 syncFormFields();
 
-// -------- APIs: CoinGecko (Crypto) & Multi-Proxy Yahoo Finance (ETFs)
+// -------- APIs: CoinGecko (Crypto)
 async function geckoSearch(q) {
   try {
     const r = await fetch(`https://api.coingecko.com/api/v3/search?query=${encodeURIComponent(q)}`);
@@ -206,72 +210,59 @@ async function geckoMarketsBatch(ids, vs) {
   return r.json();
 }
 
-async function fetchYahooViaProxies(targetUrl) {
+// -------- APIs: ETF / Aandeel (Twelve Data + Yahoo Multi-Proxy Fallback)
+async function fetchEtfQuote(rawId, targetFiat) {
+  const cleanSym = rawId.split(':')[0].replace('.DE', '').replace('.AS', '').toUpperCase();
+  const yahooTicker = rawId.includes('.') ? rawId : `${cleanSym}.DE`;
+  const key = state.twelveKey || DEFAULT_TWELVE_KEY;
+
+  // Poging 1: Twelve Data met symbol:XETR formaat
+  try {
+    const tdUrl = `https://api.twelvedata.com/price?symbol=${encodeURIComponent(cleanSym + ':XETR')}&apikey=${encodeURIComponent(key)}`;
+    const r = await fetch(tdUrl);
+    const j = await r.json();
+    if (j && j.price && !isNaN(parseFloat(j.price))) {
+      return { price: parseFloat(j.price), change24h: 0, change7d: 0, spark7d: [] };
+    }
+  } catch {}
+
+  // Poging 2: Yahoo Finance via CORS-proxies
+  const targetUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooTicker)}?interval=1d&range=7d`;
   const proxies = [
     `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`,
     `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
-    `https://thingproxy.freeboard.io/fetch/${targetUrl}`
+    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`
   ];
+
   for (const url of proxies) {
     try {
       const r = await fetch(url);
       if (!r.ok) continue;
       const text = await r.text();
       const j = JSON.parse(text);
-      if (j) return j;
+      const res = j?.chart?.result?.[0];
+      if (!res) continue;
+
+      const meta = res.meta;
+      const closes = (res.indicators?.quote?.[0]?.close || []).filter(v => v != null);
+      let price = meta.regularMarketPrice || closes[closes.length - 1] || 0;
+      const prevClose = meta.chartPreviousClose || closes[0] || price;
+      const change24h = prevClose > 0 ? ((price - prevClose) / prevClose) * 100 : 0;
+      const first7d = closes[0] || price;
+      const change7d = first7d > 0 ? ((price - first7d) / first7d) * 100 : 0;
+
+      const quoteCur = (meta.currency || 'EUR').toLowerCase();
+      if (quoteCur !== targetFiat && (quoteCur === 'eur' || quoteCur === 'usd')) {
+        const fx = await fxRateEURUSD();
+        if (fx) {
+          price = (quoteCur === 'usd' && targetFiat === 'eur') ? (price / fx) : (price * fx);
+        }
+      }
+      if (price > 0) return { price, change24h, change7d, spark7d: closes };
     } catch {}
   }
+
   return null;
-}
-
-async function searchEtfs(q) {
-  const ql = q.toLowerCase();
-  const localMatches = POPULAR_ETFS.filter(e =>
-    e.symbol.toLowerCase().includes(ql) || e.name.toLowerCase().includes(ql)
-  );
-  if (localMatches.length) return localMatches;
-
-  const url = `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0`;
-  const j = await fetchYahooViaProxies(url);
-  if (!j?.quotes?.length) return [];
-  return j.quotes
-    .filter(x => x.quoteType === 'ETF' || x.quoteType === 'EQUITY' || x.quoteType === 'MUTUALFUND')
-    .map(x => ({
-      symbol: x.symbol,
-      mic: x.exchDisp || x.exchange || '',
-      currency: 'EUR',
-      name: x.shortname || x.longname || x.symbol
-    }));
-}
-
-async function fetchYahooQuote(rawId, targetFiat) {
-  // Converteer eventuele oude "VWCE:XETR" notatie automatisch naar "VWCE.DE"
-  const ticker = rawId.includes(':XETR') ? rawId.replace(':XETR', '.DE') : rawId.split(':')[0];
-  const targetUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=7d`;
-  const j = await fetchYahooViaProxies(targetUrl);
-  const res = j?.chart?.result?.[0];
-  if (!res) {
-    toast(`⚠️ Koers voor ${ticker} tijdelijk onbereikbaar`);
-    return null;
-  }
-
-  const meta = res.meta;
-  const closes = (res.indicators?.quote?.[0]?.close || []).filter(v => v != null);
-  let price = meta.regularMarketPrice || closes[closes.length - 1] || 0;
-  const prevClose = meta.chartPreviousClose || closes[0] || price;
-  const change24h = prevClose > 0 ? ((price - prevClose) / prevClose) * 100 : 0;
-  const first7d = closes[0] || price;
-  const change7d = first7d > 0 ? ((price - first7d) / first7d) * 100 : 0;
-
-  const quoteCur = (meta.currency || 'EUR').toLowerCase();
-  if (quoteCur !== targetFiat && (quoteCur === 'eur' || quoteCur === 'usd')) {
-    const fx = await fxRateEURUSD();
-    if (fx) {
-      price = (quoteCur === 'usd' && targetFiat === 'eur') ? (price / fx) : (price * fx);
-    }
-  }
-
-  return { price, change24h, change7d, spark7d: closes };
 }
 
 async function fxRateEURUSD() {
@@ -431,6 +422,7 @@ function renderAssets(portfolioTotal) {
       </div>
 
       <div style="display:flex;justify-content:flex-end;gap:6px;margin-top:10px">
+        ${it.type === 'etf' ? `<button data-action="setprice" data-uid="${it.uid}" class="ghost icon-btn" style="padding:5px 10px;font-size:12px">Koers</button>` : ''}
         <button data-action="edit" data-uid="${it.uid}" class="ghost icon-btn" style="padding:5px 10px;font-size:12px">Bewerk</button>
         <button data-action="remove" data-uid="${it.uid}" class="danger icon-btn" style="padding:5px 10px;font-size:12px">Verwijder</button>
       </div>
@@ -557,37 +549,27 @@ dropdown.addEventListener('click', (e) => {
 });
 
 // -------- Autocomplete Search: ETF / Aandeel
-etfSearchInp.addEventListener('focus', () => {
-  if (!etfSearchInp.value.trim()) {
-    etfDropdown.innerHTML = POPULAR_ETFS.map(c => `
+function showPopularEtfs(filter = '') {
+  const fl = filter.toLowerCase();
+  const matches = POPULAR_ETFS.filter(e =>
+    e.symbol.toLowerCase().includes(fl) || e.name.toLowerCase().includes(fl)
+  );
+  if (!matches.length) {
+    etfDropdown.innerHTML = `<div class="drop-item" style="color:var(--muted)">Druk op Opslaan met ticker "${filter.toUpperCase()}"</div>`;
+  } else {
+    etfDropdown.innerHTML = matches.map(c => `
       <div class="drop-item" data-symbol="${c.symbol}" data-name="${c.name}">
         <div><strong>${c.symbol}</strong> <span style="color:var(--muted);font-size:12px">${c.name}</span></div>
-        <span class="tag">${c.mic}</span>
+        <span class="tag">EUR</span>
       </div>`).join('');
-    etfDropdown.classList.add('open');
   }
-});
-
-etfSearchInp.addEventListener('input', () => {
-  clearTimeout(etfTimer);
-  selectedEtf = null;
-  const q = etfSearchInp.value.trim();
-  if (q.length < 2) { etfDropdown.classList.remove('open'); return; }
-  etfDropdown.innerHTML = `<div class="drop-item" style="color:var(--muted)">Zoeken op beurs...</div>`;
   etfDropdown.classList.add('open');
+}
 
-  etfTimer = setTimeout(async () => {
-    const list = await searchEtfs(q);
-    etfDropdown.innerHTML = list.length
-      ? list.map(c => `
-          <div class="drop-item" data-symbol="${c.symbol}" data-name="${c.name}">
-            <div>
-              <strong>${c.symbol}</strong> <span style="color:var(--muted);font-size:12px">${c.name}</span>
-            </div>
-            <span class="tag">${c.mic}</span>
-          </div>`).join('')
-      : `<div class="drop-item" style="color:var(--muted)">Typ exacte ticker (bv. VWCE.DE)</div>`;
-  }, 320);
+etfSearchInp.addEventListener('focus', () => showPopularEtfs(etfSearchInp.value.trim()));
+etfSearchInp.addEventListener('input', () => {
+  selectedEtf = null;
+  showPopularEtfs(etfSearchInp.value.trim());
 });
 
 etfDropdown.addEventListener('click', (e) => {
@@ -714,6 +696,16 @@ assetsDiv.addEventListener('click', (e) => {
     save();
     renderAll();
     toast('🗑️ Positie verwijderd');
+  } else if (btn.dataset.action === 'setprice') {
+    const it = state.items.find(x => x.uid === uid);
+    if (!it) return;
+    const val = prompt(`Huidige koers per stuk voor ${it.symbol} (${state.fiat.toUpperCase()}):`, it.price || '');
+    if (val !== null && !isNaN(parseFloat(val))) {
+      it.price = parseFloat(val);
+      save();
+      renderAll();
+      toast(`✅ Koers van ${it.symbol} aangepast`);
+    }
   } else if (btn.dataset.action === 'edit') {
     const it = state.items.find(x => x.uid === uid);
     if (!it) return;
@@ -745,7 +737,6 @@ assetsDiv.addEventListener('click', (e) => {
 $("#addBtn").addEventListener('click', () => savePosition(false));
 $("#dcaBtn").addEventListener('click', () => savePosition(true));
 
-// Tabs & Filters
 $("#ownerTabs").addEventListener('click', (e) => {
   const tab = e.target.closest('.tab');
   if (!tab) return;
@@ -775,9 +766,9 @@ $("#privacyBtn").addEventListener('click', () => {
   renderAll();
 });
 
-// -------- Instellingen & Backup
 $("#saveSettings").addEventListener('click', async () => {
   const prev = state.fiat;
+  if ($("#twelveKey")) state.twelveKey = $("#twelveKey").value.trim() || DEFAULT_TWELVE_KEY;
   state.fiat = fiatSel.value;
   document.querySelectorAll('.curLabel').forEach(el => el.textContent = state.fiat.toUpperCase());
   state.refreshMins = Math.max(1, parseInt(refreshInp.value || '5', 10));
@@ -866,7 +857,7 @@ window.addEventListener('beforeinstallprompt', (e) => {
   };
 });
 
-// -------- Live Koersen Verversen (Crypto + ETF's)
+// -------- Live Koersen Verversen
 async function refreshPrices() {
   const liveItems = state.items.filter(it => it.type === 'crypto' || it.type === 'etf');
   if (liveItems.length === 0) {
@@ -898,7 +889,7 @@ async function refreshPrices() {
     const etfIds = [...new Set(state.items.filter(it => it.type === 'etf').map(it => it.id))];
     for (const id of etfIds) {
       try {
-        const q = await fetchYahooQuote(id, state.fiat);
+        const q = await fetchEtfQuote(id, state.fiat);
         if (q && q.price > 0) {
           state.items.forEach(it => {
             if (it.type === 'etf' && it.id === id) {
