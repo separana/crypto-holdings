@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#090d16" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" href="icon-192.png" />
-  <title>Holdings Pro</title>
+  <title>Family Net Worth v6</title>
   <style>
     :root {
       --bg: #090d16;
@@ -35,21 +35,33 @@
       font-variant-numeric: tabular-nums;
     }
 
-    /* Header */
     header {
       position: sticky; top: 0; z-index: 30;
-      background: rgba(9, 13, 22, 0.8);
+      background: rgba(9, 13, 22, 0.85);
       border-bottom: 1px solid var(--border);
       backdrop-filter: blur(12px);
     }
-    .wrap { max-width: 1120px; margin: 0 auto; padding: 12px 16px; }
+    .wrap { max-width: 1140px; margin: 0 auto; padding: 12px 16px; }
     .topbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
     .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 18px; letter-spacing: -0.3px; }
     .brand-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--good); box-shadow: 0 0 12px var(--good); }
     .actions { display: flex; gap: 6px; align-items: center; }
 
-    /* Layout Grid */
-    .grid { display: grid; grid-template-columns: 1fr; gap: 18px; margin-top: 16px; }
+    /* Owner Tabs */
+    .tabs {
+      display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; margin-top: 12px;
+      scrollbar-width: none;
+    }
+    .tabs::-webkit-scrollbar { display: none; }
+    .tab {
+      padding: 8px 16px; border-radius: 999px; border: 1px solid var(--border);
+      background: rgba(255,255,255,0.03); color: var(--muted); font-weight: 600; font-size: 13px;
+      cursor: pointer; white-space: nowrap; transition: all .15s; width: auto;
+    }
+    .tab:hover { border-color: var(--border-hover); color: var(--text); }
+    .tab.active { background: var(--acc); border-color: var(--acc); color: #fff; box-shadow: 0 4px 14px var(--acc-glow); }
+
+    .grid { display: grid; grid-template-columns: 1fr; gap: 18px; margin-top: 14px; }
     @media(min-width: 960px) { .grid { grid-template-columns: 1.85fr 1fr; align-items: start; } }
 
     .card {
@@ -73,13 +85,14 @@
     .pill.loss { background: var(--bad-bg); color: var(--bad); }
     .pill.neutral { background: rgba(255,255,255,0.06); color: var(--muted); }
 
-    .chart-box {
-      position: relative; height: 210px; margin: 16px 0 8px;
-      display: flex; align-items: center; justify-content: center;
-    }
+    .chart-header { display: flex; justify-content: space-between; align-items: center; margin-top: 16px; }
+    .chart-toggle { display: flex; gap: 4px; background: #0c1220; padding: 3px; border-radius: 10px; border: 1px solid var(--border); }
+    .chart-toggle button { padding: 4px 10px; font-size: 11px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); width: auto; }
+    .chart-toggle button.active { background: var(--surface-2); color: var(--text); }
+    .chart-box { position: relative; height: 210px; margin: 8px 0; display: flex; align-items: center; justify-content: center; }
 
     /* Form & Autocomplete */
-    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
     @media(max-width: 600px) { .form-grid { grid-template-columns: 1fr; } }
     .field { position: relative; }
     label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; font-weight: 500; }
@@ -105,7 +118,6 @@
     .drop-item:hover { background: rgba(59, 130, 246, 0.15); }
     .drop-item img { width: 22px; height: 22px; border-radius: 50%; }
 
-    /* Buttons */
     button { cursor: pointer; font-weight: 600; }
     button:hover { border-color: var(--border-hover); filter: brightness(1.08); }
     button.primary { background: var(--acc); border-color: var(--acc); color: #fff; }
@@ -115,7 +127,7 @@
     button.icon-btn { width: auto; padding: 7px 11px; font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
 
     /* Asset Cards */
-    .assets-header { display: flex; justify-content: space-between; align-items: center; margin: 20px 0 10px; }
+    .assets-header { display: flex; justify-content: space-between; align-items: center; margin: 20px 0 10px; gap: 8px; flex-wrap: wrap; }
     .assets { display: grid; grid-template-columns: 1fr; gap: 12px; }
     @media(min-width: 680px) { .assets { grid-template-columns: 1fr 1fr; } }
 
@@ -128,19 +140,18 @@
     .asset-id { display: flex; align-items: center; gap: 10px; }
     .coin-icon {
       width: 40px; height: 40px; border-radius: 50%; background: var(--surface-2);
-      display: flex; align-items: center; justify-content: center; overflow: hidden; font-weight: 700; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center; overflow: hidden; font-weight: 700; flex-shrink: 0; font-size: 16px;
     }
     .coin-icon img { width: 100%; height: 100%; object-fit: cover; }
-    .coin-name { font-weight: 700; font-size: 15px; display: flex; align-items: center; gap: 6px; }
-    .weight-tag { font-size: 11px; padding: 1px 6px; border-radius: 6px; background: rgba(255,255,255,0.07); color: var(--muted); font-weight: 600; }
+    .coin-name { font-weight: 700; font-size: 15px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .tag { font-size: 10px; padding: 2px 6px; border-radius: 6px; background: rgba(255,255,255,0.07); color: var(--muted); font-weight: 700; text-transform: uppercase; }
+    .tag.owner { background: rgba(59, 130, 246, 0.15); color: #93c5fd; }
     .asset-mid { display: flex; justify-content: space-between; align-items: baseline; margin: 10px 0 6px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.05); }
     .asset-bot { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 8px; }
     canvas.spark { width: 95px; height: 32px; }
 
-    /* Privacy blur */
     .blur-mode .sensitive { filter: blur(6px); user-select: none; }
 
-    /* Toast */
     .toast {
       position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(80px);
       background: #1e293b; color: #fff; border: 1px solid var(--border-hover);
@@ -148,22 +159,29 @@
       box-shadow: 0 10px 25px rgba(0,0,0,0.5); opacity: 0; transition: all .25s ease; z-index: 100;
     }
     .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
-
     .shimmer { opacity: 0.6; pointer-events: none; }
     footer { color: var(--muted); font-size: 12px; margin: 28px 0; text-align: center; }
   </style>
 </head>
 <body>
 <header>
-  <div class="wrap topbar">
-    <div class="brand"><span class="brand-dot"></span> Holdings</div>
-    <div class="actions">
-      <button id="privacyBtn" class="ghost icon-btn" title="Verberg bedragen">👁️</button>
-      <button id="refreshNow" class="ghost icon-btn" title="Ververs koersen">↻</button>
-      <button id="exportBtn" class="ghost icon-btn">Export</button>
-      <label for="importFile" class="ghost icon-btn" style="cursor:pointer;margin:0;border:1px solid var(--border);border-radius:11px">Import</label>
-      <input id="importFile" type="file" accept="application/json" style="display:none" />
+  <div class="wrap">
+    <div class="topbar">
+      <div class="brand"><span class="brand-dot"></span> Family Net Worth</div>
+      <div class="actions">
+        <button id="privacyBtn" class="ghost icon-btn" title="Verberg bedragen">👁️</button>
+        <button id="refreshNow" class="ghost icon-btn" title="Ververs koersen">↻</button>
+        <button id="exportBtn" class="ghost icon-btn">Export</button>
+        <label for="importFile" class="ghost icon-btn" style="cursor:pointer;margin:0;border:1px solid var(--border);border-radius:11px">Import</label>
+        <input id="importFile" type="file" accept="application/json" style="display:none" />
+      </div>
     </div>
+    <nav class="tabs" id="ownerTabs">
+      <button class="tab active" data-owner="all">👨‍👩‍👧‍👦 Totaal Gezin</button>
+      <button class="tab" data-owner="mine">👤 Mijn Vermogen</button>
+      <button class="tab" data-owner="leo">👧 Léo</button>
+      <button class="tab" data-owner="cesar">👶 César</button>
+    </nav>
   </div>
 </header>
 
@@ -173,7 +191,7 @@
     <section class="card">
       <div class="hero-top">
         <div>
-          <div class="hero-label">Totale Portefeuillewaarde</div>
+          <div class="hero-label" id="heroTitle">Totale Gezinswaarde</div>
           <div class="hero-val sensitive" id="heroTotal">€ 0,00</div>
           <div class="hero-sub">
             <span>Inleg: <strong class="sensitive" id="heroInvested">€ 0,00</strong></span>
@@ -189,25 +207,74 @@
         </div>
       </div>
 
+      <div class="chart-header">
+        <span style="font-size:12px;color:var(--muted);font-weight:600">VERDELING</span>
+        <div class="chart-toggle" id="chartModeToggle">
+          <button class="active" data-mode="category">Per Categorie</button>
+          <button data-mode="asset">Per Positie</button>
+        </div>
+      </div>
       <div class="chart-box" id="pieWrap">
         <canvas id="pie"></canvas>
       </div>
 
       <!-- Toevoegen / DCA Formulier -->
       <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">
-        <div class="field">
-          <label for="search">Munt zoeken & selecteren</label>
-          <input id="search" autocomplete="off" placeholder="Typ naam of ticker (bv. Bitcoin, SOL, ENJ)..." />
+        <div class="form-grid">
+          <div>
+            <label for="assetType">Type Actief</label>
+            <select id="assetType">
+              <option value="etf">📈 ETF / Aandeel (Live ticker)</option>
+              <option value="crypto">🪙 Crypto (Live CoinGecko)</option>
+              <option value="manual">🏦 Spaarrekening / Overig (Manueel)</option>
+            </select>
+          </div>
+          <div>
+            <label for="assetOwner">Portefeuille (Eigenaar)</label>
+            <select id="assetOwner">
+              <option value="mine">👤 Mijn Vermogen</option>
+              <option value="leo">👧 Léo (Subrekening)</option>
+              <option value="cesar">👶 César (Subrekening)</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Dynamische invoer afhankelijk van Type -->
+        <div id="cryptoSearchWrap" class="field" style="margin-top:10px;display:none">
+          <label for="search">Crypto zoeken</label>
+          <input id="search" autocomplete="off" placeholder="Typ naam of ticker (bv. Bitcoin, SOL, ETH)..." />
           <div id="dropdown" class="dropdown"></div>
         </div>
 
-        <div class="form-grid">
+        <div id="etfWrap" class="form-grid" style="margin-top:10px">
           <div>
-            <label for="amount">Aantal munten</label>
+            <label for="etfTicker">Beurs Ticker (Yahoo Finance)</label>
+            <input id="etfTicker" placeholder="bv. VWCE.DE, SPYI.DE, EXUS.DE" />
+          </div>
+          <div>
+            <label for="etfName">Naam ETF / Aandeel</label>
+            <input id="etfName" placeholder="bv. Vanguard FTSE All-World" />
+          </div>
+        </div>
+
+        <div id="manualWrap" class="form-grid" style="margin-top:10px;display:none">
+          <div>
+            <label for="manualName">Naam bezitting / rekening</label>
+            <input id="manualName" placeholder="bv. Spaarrekening Léo, Goud, TCG" />
+          </div>
+          <div>
+            <label for="manualValue">Huidige waarde (<span class="curLabel">EUR</span>)</label>
+            <input id="manualValue" type="number" step="any" placeholder="0.00" />
+          </div>
+        </div>
+
+        <div class="form-grid">
+          <div id="qtyField">
+            <label for="amount">Aantal stuks / munten</label>
             <input id="amount" type="number" step="any" placeholder="0.00" />
           </div>
           <div>
-            <label for="avgCost">Aankoopprijs per munt (<span id="curLabel">EUR</span>)</label>
+            <label for="avgCost" id="costLabel">Aankoopprijs per stuk (<span class="curLabel">EUR</span>)</label>
             <input id="avgCost" type="number" step="any" placeholder="0.00" />
           </div>
         </div>
@@ -218,21 +285,29 @@
         </div>
       </div>
 
-      <!-- Lijst met Munten -->
+      <!-- Lijst met Posities -->
       <div class="assets-header">
-        <strong style="font-size:15px">Jouw Posities</strong>
-        <select id="sortSel" style="width:auto;padding:6px 10px;font-size:12px">
-          <option value="value">Sorteer: Hoogste waarde</option>
-          <option value="plPct">Sorteer: Beste rendement (%)</option>
-          <option value="change24h">Sorteer: 24u verandering</option>
-        </select>
+        <strong style="font-size:15px" id="listTitle">Alle Posities</strong>
+        <div style="display:flex;gap:6px">
+          <select id="typeFilter" style="width:auto;padding:6px 10px;font-size:12px">
+            <option value="all">Type: Alles</option>
+            <option value="etf">Alleen ETF's</option>
+            <option value="crypto">Alleen Crypto</option>
+            <option value="manual">Alleen Cash / Overig</option>
+          </select>
+          <select id="sortSel" style="width:auto;padding:6px 10px;font-size:12px">
+            <option value="value">Sorteer: Hoogste waarde</option>
+            <option value="plPct">Sorteer: Beste rendement (%)</option>
+            <option value="change24h">Sorteer: 24u verandering</option>
+          </select>
+        </div>
       </div>
       <div class="assets" id="assets"></div>
     </section>
 
     <!-- Rechterkolom: Instellingen -->
     <aside class="card">
-      <h3 style="margin:0 0 12px;font-size:16px">Voorkeuren</h3>
+      <h3 style="margin:0 0 12px;font-size:16px">Instellingen</h3>
       <div class="form-grid">
         <div>
           <label for="fiat">Valuta</label>
@@ -260,18 +335,20 @@
 
       <div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--border);display:grid;gap:8px">
         <button id="installBtn" class="ghost">📲 Installeer als App (PWA)</button>
-        <button id="loadSample" class="ghost">🧪 Laad voorbeeldportfolio</button>
         <button id="forceBtn" class="ghost">🔄 Cache legen & herladen</button>
         <button id="clearBtn" class="danger" style="margin-top:6px">🗑️ Alle data wissen</button>
       </div>
 
-      <p style="font-size:12px;color:var(--muted);margin-top:14px;line-height:1.5">
-        100% lokaal opgeslagen in je browser. Maak regelmatig een JSON-export als back-up.
-      </p>
+      <div style="margin-top:16px;padding:12px;border-radius:12px;background:rgba(255,255,255,0.03);font-size:12px;color:var(--muted);line-height:1.5">
+        <strong style="color:var(--text)">Populaire Europese ETF-tickers:</strong><br>
+        • <code>VWCE.DE</code> (Vanguard FTSE All-World)<br>
+        • <code>SPYI.DE</code> (SPDR MSCI ACWI IMI)<br>
+        • <code>EXUS.DE</code> (Xtrackers MSCI World ex-USA)
+      </div>
     </aside>
   </div>
 
-  <footer>Live marktdata via CoinGecko • Holdings Pro v5</footer>
+  <footer>Live marktdata via CoinGecko & Yahoo Finance • Family Net Worth v6</footer>
 </main>
 
 <div id="toast" class="toast"></div>
