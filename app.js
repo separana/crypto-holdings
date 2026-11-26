@@ -197,14 +197,29 @@ async function geckoMarketsBatch(ids, vs) {
 }
 
 async function fetchYahooQuote(ticker, targetFiat) {
-  // Gebruikt allorigins CORS-proxy om Yahoo Finance chart-data op te halen
   const targetUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=7d`;
-  const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
-  const r = await fetch(proxyUrl);
-  if (!r.ok) throw new Error('Yahoo fetch error');
-  const j = await r.json();
-  const res = j.chart?.result?.[0];
-  if (!res) return null;
+  const proxies = [
+    `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`
+  ];
+
+  let res = null;
+  for (const url of proxies) {
+    try {
+      const r = await fetch(url);
+      if (!r.ok) continue;
+      const j = await r.json();
+      if (j.chart?.result?.[0]) {
+        res = j.chart.result[0];
+        break;
+      }
+    } catch {}
+  }
+
+  if (!res) {
+    toast(`⚠️ Ticker "${ticker}" niet gevonden of geblokkeerd`);
+    return null;
+  }
 
   const meta = res.meta;
   const closes = (res.indicators?.quote?.[0]?.close || []).filter(v => v != null);
@@ -214,7 +229,6 @@ async function fetchYahooQuote(ticker, targetFiat) {
   const first7d = closes[0] || price;
   const change7d = first7d > 0 ? ((price - first7d) / first7d) * 100 : 0;
 
-  // Valuta-conversie indien de ETF in USD noteert terwijl app op EUR staat (of vice versa)
   const quoteCur = (meta.currency || 'EUR').toLowerCase();
   if (quoteCur !== targetFiat && (quoteCur === 'eur' || quoteCur === 'usd')) {
     const fx = await fxRateEURUSD();
@@ -259,7 +273,6 @@ function getVisibleItems() {
 
 // -------- Rendering
 function renderTotals() {
-  // Bereken totalen voor de gekozen eigenaar-tab (ongeacht typeFilter)
   const ownerItems = state.items.filter(it => state.activeOwner === 'all' || it.owner === state.activeOwner);
 
   let total = 0, invested = 0;
@@ -585,7 +598,6 @@ async function savePosition(isDca = false) {
     toast(`✅ ${existing.name} bijgewerkt`);
   }
 
-  // Formulier resetten
   editingId = null;
   selectedCrypto = null;
   searchInp.value = '';
@@ -645,7 +657,6 @@ $("#ownerTabs").addEventListener('click', (e) => {
   const tab = e.target.closest('.tab');
   if (!tab) return;
   state.activeOwner = tab.dataset.owner;
-  // Zet het formulier standaard op dezelfde eigenaar (tenzij 'all')
   if (state.activeOwner !== 'all') assetOwnerSel.value = state.activeOwner;
   document.querySelectorAll('#ownerTabs .tab').forEach(t => t.classList.toggle('active', t === tab));
   save();
